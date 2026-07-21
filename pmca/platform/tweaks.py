@@ -102,6 +102,20 @@ class RecLimit4kTweak(BackupTweak):
   return '%dh %02dm %02ds' % (hours, minutes, seconds)
 
 
+class PalNtscBackupTweak(BackupTweak):
+ def __init__(self, backup):
+  super(PalNtscBackupTweak, self).__init__(backup, 'palNtsc', True)
+
+ def offValue(self):
+  return b'\x00'
+
+ def onValue(self):
+  return b'\x01'
+
+ def strValue(self):
+  return 'NTSC' if self.enabled() else 'PAL'
+
+
 class LanguageTweak(BackupTweak):
  BACKUP_LANG_ENABLED = 1
  BACKUP_LANG_DISABLED = 2
@@ -151,6 +165,7 @@ class TweakInterface:
   self.addTweak('recLimit4k', 'Disable 4K video recording limit', RecLimit4kTweak(backup))
   self.addTweak('language', 'Unlock all languages', LanguageTweak(backup))
   self.addTweak('palNtscSelector', 'Enable PAL / NTSC selector & warning', BooleanBackupTweak(backup, 'palNtscSelector'))
+  self.addTweak('palNtsc', 'PAL / NTSC', PalNtscBackupTweak(backup))
   self.addTweak('usbAppInstaller', 'Enable USB app installer', BooleanBackupTweak(backup, 'usbAppInstaller'))
 
  def addTweak(self, name, desc, tweak):

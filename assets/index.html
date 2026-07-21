@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PMCA Camera Utility</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="header">
+    <h1 id="app-title">PMCA Camera Utility</h1>
+    <a id="docs-link" href="#" target="_blank">Camera compatibility</a>
+</div>
+
+<div class="main-content">
+    <div class="tabs" id="tabs">
+        <div class="tab active" data-tab="info">Camera</div>
+        <div class="tab" data-tab="install">Install App</div>
+        <div class="tab" data-tab="tweaks">Tweaks</div>
+        <div class="tab" data-tab="system">System</div>
+    </div>
+
+    <div class="tab-panels">
+        <!-- Camera Info -->
+        <div class="tab-panel active" id="panel-info">
+            <div class="card">
+                <button id="btn-info" class="btn-primary btn-block" onclick="api.getInfo()">
+                    Get camera info
+                </button>
+                <table class="camera-info-table" id="camera-info-display" style="margin-top:12px;">
+                    <tr><td>Model</td><td data-field="Model" class="camera-info-value camera-info-placeholder">—</td></tr>
+                    <tr><td>Product code</td><td data-field="Product code" class="camera-info-value camera-info-placeholder">—</td></tr>
+                    <tr><td>Serial number</td><td data-field="Serial number" class="camera-info-value camera-info-placeholder">—</td></tr>
+                    <tr><td>Firmware version</td><td data-field="Firmware version" class="camera-info-value camera-info-placeholder">—</td></tr>
+                    <tr><td>Lens</td><td data-field="Lens" class="camera-info-value camera-info-placeholder">—</td></tr>
+                    <tr><td>GPS Data</td><td data-field="GPS Data" class="camera-info-value camera-info-placeholder">—</td></tr>
+                </table>
+            </div>
+            <div class="card" id="wifi-section">
+                <div class="card-title">WiFi Settings</div>
+                <div class="input-row" style="margin-bottom:12px;">
+                    <label style="font-size:13px;display:inline-flex;align-items:center;gap:6px;cursor:pointer;">
+                        <input type="checkbox" id="wifi-multi" style="width:auto;">
+                        Multi-WiFi
+                    </label>
+                    <button id="btn-wifi-read" class="btn-primary" style="margin-left:auto;" onclick="readWifi()">Read</button>
+                </div>
+                <div id="wifi-list">
+                    <div style="font-size:13px;color:var(--color-text-secondary);">Press "Read" to load WiFi networks from camera</div>
+                </div>
+                <div id="wifi-actions" style="margin-top:12px;display:none;">
+                    <div class="input-row" style="margin-bottom:8px;">
+                        <button onclick="addWifiNetwork()" style="font-size:13px;">+ Add network</button>
+                        <button id="btn-wifi-write" class="btn-primary" style="margin-left:auto;" onclick="writeWifi()">Write to camera</button>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Backup Settings</div>
+                <div class="warning" style="margin-bottom:12px;">
+                    Puts camera in <strong>updater</strong> or <strong>service</strong> mode.
+                    Restoring a backup will <strong>overwrite all camera settings</strong>.
+                </div>
+                <div class="input-row">
+                    <button id="btn-backup-download" class="btn-primary" onclick="downloadBackup()">
+                        Download backup
+                    </button>
+                    <button id="btn-backup-restore" class="btn-danger" onclick="restoreBackup()">
+                        Restore backup...
+                    </button>
+                    <span style="font-size:14px;white-space:nowrap;">in</span>
+                    <select id="backup-mode-select" style="width:auto;flex:none;">
+                        <option value="updater">updater</option>
+                        <option value="service">service</option>
+                    </select>
+                    <span style="font-size:14px;white-space:nowrap;">mode</span>
+                </div>
+                <div class="status-text" id="backup-status" style="font-size:13px;margin-top:8px;display:none;"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Firmware update</div>
+                <button id="btn-firmware" class="btn-primary btn-block" onclick="api.firmwareUpdate()">
+                    Select firmware file and update...
+                </button>
+            </div>
+        </div>
+
+        <!-- Install App -->
+        <div class="tab-panel" id="panel-install">
+            <div class="card">
+                <div class="card-title">Select an app from the list</div>
+                <div class="input-row">
+                    <select id="app-select" onchange="updateInstallButton()"><option value="">Loading...</option></select>
+                    <button id="btn-refresh-apps" onclick="api.loadApps()">Refresh</button>
+                </div>
+                <div style="margin-top: 8px;">
+                    <a id="app-source-link" href="#" target="_blank" style="font-size:12px;color:var(--color-primary);">Source</a>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Or install from APK file</div>
+                <div class="input-row">
+                    <span id="apk-filename" style="flex:1;font-size:13px;color:var(--color-text-secondary);">No file selected</span>
+                    <button onclick="api.selectApk()">Select APK...</button>
+                </div>
+            </div>
+            <div class="card">
+                <button id="btn-install" class="btn-primary btn-block" onclick="installSelected()" disabled>
+                    Select App to Install
+                </button>
+            </div>
+        </div>
+
+        <!-- Tweaks -->
+        <div class="tab-panel" id="panel-tweaks">
+            <div class="card">
+                <div class="input-row">
+                    <button id="btn-tweaks-start" class="btn-primary" style="white-space:nowrap;" onclick="startTweaks()">
+                        Start tweaking
+                    </button>
+                    <span style="font-size:14px;white-space:nowrap;">in</span>
+                    <select id="tweaks-mode-select" style="width:auto;flex:none;">
+                        <option value="updater">updater</option>
+                        <option value="service">service</option>
+                    </select>
+                    <span style="font-size:14px;white-space:nowrap;">mode</span>
+                </div>
+            </div>
+            <div class="card" id="tweaks-inline-panel" style="margin-top:12px;">
+                <div class="card-title">Tweaks</div>
+                <div id="tweaks-list">
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">Disable video recording limit</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">Disable 4K video recording limit</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">Unlock all languages</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">Enable PAL / NTSC selector &amp; warning</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">PAL / NTSC</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                    <label class="tweak-item tweaks-placeholder">
+                        <input type="checkbox" disabled>
+                        <div class="tweak-info"><div class="tweak-desc">Enable USB app installer</div>
+                        <div class="tweak-value">Connect camera to see status</div></div>
+                    </label>
+                </div>
+                <div class="btn-group" id="tweaks-actions" style="margin-top:12px;">
+                    <button id="btn-cancel-tweaks" onclick="api.cancelTweaks()" disabled>Disconnect</button>
+                    <button class="btn-primary" id="btn-apply-tweaks" onclick="api.applyTweaks()" disabled>Apply</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- System -->
+        <div class="tab-panel" id="panel-system">
+            <div class="card">
+                <button id="btn-diagnose" class="btn-primary btn-block" onclick="api.runDiagnostics()">
+                    Diagnose host system
+                </button>
+            </div>
+            <div class="card" id="diagnostics-results" style="margin-top:12px;display:none;">
+                <div class="card-title">Diagnostics</div>
+                <div id="diagnostics-list"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="log-container expanded" id="log-container">
+    <div class="log-header">
+        <span class="log-toggle" onclick="toggleLog()">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            Log
+            <span class="log-error-dot"></span>
+        </span>
+        <div class="log-actions">
+            <button onclick="copyLog()" title="Copy log">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button onclick="clearLog()" title="Clear log">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+            </button>
+        </div>
+    </div>
+    <div id="log"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="confirm-modal" style="display:none;">
+    <div class="modal-box">
+        <img src="icon.png" alt="" class="modal-icon">
+        <div class="modal-title" id="confirm-modal-title"></div>
+        <div class="modal-message" id="confirm-modal-message"></div>
+        <div class="btn-group" style="justify-content:flex-end;margin-top:16px;">
+            <button id="confirm-modal-cancel" onclick="closeConfirmModal(false)">Cancel</button>
+            <button id="confirm-modal-ok" class="btn-danger" onclick="closeConfirmModal(true)">Restore</button>
+        </div>
+    </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

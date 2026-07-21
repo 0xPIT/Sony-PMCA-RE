@@ -270,6 +270,7 @@ def infoCommand(driverName=None):
     return
    for k, v in props:
     print('%-20s%s' % (k + ': ', v))
+   return props
 
 
 def installCommand(driverName=None, apkFile=None, appPackage=None, outFile=None):
