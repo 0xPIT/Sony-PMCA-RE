@@ -63,11 +63,33 @@ jobs:
       run: |
         dist/pmca-console* -h
 
+    - name: Package (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        mkdir release
+        Copy-Item dist/pmca-console*.exe release/
+        Copy-Item dist/pmca-web*.exe release/
+
+    - name: Package (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        mkdir release
+        cp dist/pmca-console* release/
+        cd dist && zip -r ../release/pmca-web-$(git describe --always --tags)-osx.app.zip *.app
+
+    - name: Package (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        mkdir release
+        cp dist/pmca-console* release/
+        cp dist/pmca-web* release/
+
     - name: Upload
       uses: actions/upload-artifact@v5
       with:
         name: ${{ matrix.artifact }}
-        path: dist/*
+        path: release/*
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -86,4 +108,3 @@ jobs:
         find artifacts -type f | xargs gh release create ${{ github.ref_name }} --generate-notes
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
