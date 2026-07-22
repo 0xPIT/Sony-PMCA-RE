@@ -4,7 +4,7 @@ This tool interfaces with Sony digital cameras through USB. It allows to tweak s
 
 ## What's New
 
-> [!WARNING]
+> [!CAUTION]
 > This version is mostly vibe-coded and tested on macOS with an A7iii only so far.
 
 - New web-based UI (pywebview), replacing the old Tkinter GUI
@@ -20,11 +20,13 @@ This tool interfaces with Sony digital cameras through USB. It allows to tweak s
 ### Screenshots
 
 
-| Camera Info & WiFi | Backup & Firmware | Install App | Tweaks | System Diagnostics |
-|:--:|:--:|:--:|:--:|:--:|
-| ![Camera](docs/screenshots/Screenshot1.png) | ![Backup](docs/screenshots/Screenshot2.png) | ![Install](docs/screenshots/Screenshot3.png) | ![Tweaks](docs/screenshots/Screenshot4.png) | ![System](docs/screenshots/Screenshot5.png) |
+| Camera Info & WiFi | Backup & Firmware | Install App |
+|:--:|:--:|:--:|
+| <img src="docs/screenshots/Screenshot1.png" width="250"> | <img src="docs/screenshots/Screenshot2.png" width="250"> | <img src="docs/screenshots/Screenshot3.png" width="250"> |
 
-
+| Tweaks | System Diagnostics |
+|:--:|:--:|
+| <img src="docs/screenshots/Screenshot4.png" width="250"> | <img src="docs/screenshots/Screenshot5.png" width="250"> |
 
 
 ## Installation
@@ -43,6 +45,9 @@ The application should work fine on Windows using the operating system's mass st
 Download the [latest stable release](https://github.com/ma1co/Sony-PMCA-RE/releases/latest) or the newest [development build](https://ci.appveyor.com/project/ma1co/sony-pmca-re/build/artifacts).
 
 ### macOS
+
+[!TIP]
+On recent macOS Tahoe, this tool seems to work fine without Sony's proprietary drivers.
 
 macOS binaries are also distributed, but less tested than the Windows equivalents. Getting the USB drivers to work may require some fiddling. To communicate with cameras in mass storage mode, Sony's [Camera Driver](https://support.d-imaging.sony.co.jp/mac/driver/11/ja/) has to be installed. Make sure to close all applications which could access USB drivers, including Photos, Dropbox and Google Drive.
 
