@@ -2,12 +2,13 @@
 
 import os
 import subprocess
+import sys
 
 from . import DiagResult
 
 
-def check_zadig_driver():
- """Check if a libusb-compatible driver is installed for Sony devices."""
+def check_libusb_device_access():
+ """Check libusb device access without recommending an unverified driver."""
  try:
   import usb.core
   devices = list(usb.core.find(find_all=True, idVendor=0x054c))
@@ -15,36 +16,43 @@ def check_zadig_driver():
    for dev in devices:
     try:
      dev.get_active_configuration()
-     return DiagResult('pass', 'USB driver (Zadig)',
+     return DiagResult('pass', 'libusb device access',
       'Sony device accessible via libusb (PID 0x%04x).' % dev.idProduct, None)
     except usb.core.USBError as e:
      if 'Entity not found' in str(e) or 'Access' in str(e):
-      return DiagResult('fail', 'USB driver (Zadig)',
+      return DiagResult('fail', 'libusb device access',
        'Sony device found but not accessible. Wrong driver or access denied.',
-       'Use Zadig 2.8 (zadig.akeo.ie) to install the "libusb-win32" driver for your Sony camera. '
-       'Select your camera in Zadig, choose "libusb-win32" as the target driver, and click "Replace Driver".')
-   return DiagResult('warn', 'USB driver (Zadig)',
+       'Record VID, PID, interface number, instance ID and current driver. Test only the exact identity required by PMCA, with a documented rollback.')
+   return DiagResult('warn', 'libusb device access',
     'Sony device found but could not verify driver.',
-    'If operations fail, use Zadig to install libusb-win32 for your camera.')
-  return DiagResult('warn', 'USB driver (Zadig)',
+    'Record the exact USB identity and current binding before considering a manual driver test.')
+  return DiagResult('warn', 'libusb device access',
    'No Sony USB device detected to check driver.',
    'Connect your camera first, then re-run diagnostics.')
  except Exception as e:
-  return DiagResult('fail', 'USB driver (Zadig)',
+  return DiagResult('warn', 'libusb device access',
    'Cannot check driver: %s' % str(e),
-   'Ensure libusb is installed. Use Zadig 2.8 to install libusb-win32 for your camera.')
+   'Verify that the libusb-1.0 runtime DLL is available before evaluating any device-driver binding.')
 
 
 def check_libusb_dll():
  """Check if libusb DLL is present on the system."""
  search_paths = [
+  os.path.join(getattr(sys, '_MEIPASS', ''), 'libusb-1.0.dll'),
+  os.path.join(os.path.dirname(sys.executable), 'libusb-1.0.dll'),
   os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'System32', 'libusb0.dll'),
   os.path.join(os.environ.get('SYSTEMROOT', 'C:\\Windows'), 'SysWOW64', 'libusb0.dll'),
  ]
- # Also check PATH
+ for directory in os.environ.get('PATH', '').split(os.pathsep):
+  if directory:
+   search_paths.extend([
+    os.path.join(directory, 'libusb-1.0.dll'),
+    os.path.join(directory, 'libusb0.dll'),
+   ])
+
  found = []
  for p in search_paths:
-  if os.path.exists(p):
+  if os.path.isfile(p) and p not in found:
    found.append(p)
 
  if not found:
@@ -59,8 +67,8 @@ def check_libusb_dll():
  if found:
   return DiagResult('pass', 'libusb DLL', 'Found: %s' % ', '.join(found), None)
  return DiagResult('warn', 'libusb DLL',
-  'libusb DLL not found in system directories.',
-  'Install a libusb-compatible driver via Zadig, or manually place libusb-1.0.dll in your system PATH.')
+  'libusb runtime DLL not found in the bundle, application directory, or system directories.',
+  'Provide libusb-1.0.dll to the application build or system PATH. This does not change the device driver.')
 
 
 def check_service_mode_driver():
@@ -79,9 +87,8 @@ def check_service_mode_driver():
     except usb.core.USBError:
      return DiagResult('fail', 'Service mode driver',
       'Service mode device found but not accessible.',
-      'Use Zadig to install libusb-win32 for the "service mode" USB device. '
-      'The device appears only when the camera enters service mode — '
-      'you may need to start the operation and then install the driver when it shows up in Zadig.')
+      'Record this service-mode identity separately from normal MTP/mass storage. '
+      'Verify VID, PID, interface, current driver, supported backend and rollback before any manual change.')
   return DiagResult('pass', 'Service mode driver',
    'No service mode device detected (camera not in service mode — this is normal).', None)
  except Exception as e:
@@ -123,7 +130,7 @@ def run_windows_checks():
  return [
   check_windows_version(),
   check_libusb_dll(),
-  check_zadig_driver(),
+  check_libusb_device_access(),
   check_service_mode_driver(),
   check_wmp_not_claiming(),
  ]

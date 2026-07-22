@@ -1,4 +1,7 @@
 /build
 /dist
+/build-*
+/dist-*
+/.venv
 *.pyc
 .DS_Store

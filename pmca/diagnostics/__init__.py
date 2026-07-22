@@ -13,9 +13,16 @@ def check_libusb_available():
   import usb.backend.libusb1
   backend = usb.backend.libusb1.get_backend()
   if backend is None:
-   return DiagResult('fail', 'libusb backend',
+   if sys.platform == 'win32':
+    status = 'warn'
+    solution = ('Provide a compatible libusb-1.0 runtime DLL to PyUSB. '
+     'This is separate from a Windows USB device-driver binding; do not change a device driver until the exact USB identity is verified.')
+   else:
+    status = 'fail'
+    solution = 'Install libusb: "brew install libusb" (macOS) or "apt install libusb-1.0-0-dev" (Linux).'
+   return DiagResult(status, 'libusb backend',
     'libusb shared library not found by PyUSB.',
-    'Install libusb: "brew install libusb" (macOS), "apt install libusb-1.0-0-dev" (Linux), or install via Zadig (Windows).')
+    solution)
   return DiagResult('pass', 'libusb backend', 'libusb backend loaded successfully.', None)
  except ImportError as e:
   return DiagResult('fail', 'libusb backend',
@@ -52,9 +59,12 @@ def check_sony_device_visible():
   return DiagResult('pass', 'Sony USB device',
    'Found %d Sony device(s): %s' % (len(devices), ', '.join(names)), None)
  except Exception as e:
-  return DiagResult('fail', 'Sony USB device',
+  status = 'warn' if sys.platform == 'win32' else 'fail'
+  solution = ('The libusb scan is unavailable. Native Windows MTP/WPD or mass-storage access may still work.'
+   if sys.platform == 'win32' else 'Check libusb installation and USB permissions.')
+  return DiagResult(status, 'Sony USB device',
    'Error scanning USB: %s' % str(e),
-   'Check libusb installation and USB permissions.')
+   solution)
 
 
 def check_python_version():

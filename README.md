@@ -115,15 +115,11 @@ It is currently only supported in the command line application:
 
 #### Windows Drivers
 
-To use service mode on Windows, custom drivers have to be installed using [Zadig](http://zadig.akeo.ie/):
+Normal MTP and mass-storage operation should use the native Windows drivers whenever that PMCA path works. Service mode re-enumerates the camera as a separate USB identity and may require a libusb-compatible binding for that identity.
 
-- Make sure the camera is connected in mass storage mode.
-- In Zadig, check *Options -> List All Devices*, select the camera, select *libusb-win32* and click *Replace Driver*.
-- Run `pmca-console serviceshell` to make the camera switch modes.
-- Once the camera has switched, repeat the above step to install a driver for service mode.
-- You should now be able to use `pmca-console serviceshell`.
+Do not replace a normal MTP or mass-storage driver pre-emptively. Before any manual driver test, record the exact device name, VID, PID, interface number, device-instance ID, physical port, current driver and intended rollback. If several Sony devices are present or the normal and service-mode identities cannot be distinguished, stop.
 
-To be able to use the camera normally again, the libusb drivers have to be uninstalled in device manager.
+WinUSB, libusbK and libusb-win32 are candidates to validate for the specific identity; none is a universal recommendation. Confirm that the PMCA/PyUSB/libusb combination supports the selected binding and document restoration of the original driver before proceeding. PMCA does not install or replace Windows drivers automatically. See [Windows validation](docs/WindowsValidation.md) for the test matrix.
 
 ## Is it safe?
 

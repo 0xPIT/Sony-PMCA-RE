@@ -6,6 +6,7 @@ import sys
 import threading
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import webview
 
@@ -23,6 +24,7 @@ from pmca.platform.backend.usb import UsbPlatformBackend
 from pmca.platform.tweaks import TweakInterface
 from pmca.diagnostics import run_all_checks
 from pmca.backup import BackupFile
+from pmca.resources import get_bundle_resource_path
 
 if getattr(sys, 'frozen', False):
     from frozenversion import version
@@ -94,25 +96,83 @@ class Api:
 
     def __init__(self):
         self._window = None
+        self._ui_lock = threading.RLock()
+        self._state_lock = threading.Lock()
+        self._tweak_lock = threading.RLock()
+        self._closing = False
+        self._ui_ready = False
+        self._active_camera_task = None
         self._apps = []
+        self._selected_apk = None
         self._tweaks_data = None
         self._tweak_interface = None
+        self._tweak_apply_started = False
 
     def set_window(self, window):
-        self._window = window
+        with self._ui_lock:
+            self._window = window
+
+    def mark_ready(self):
+        with self._ui_lock:
+            self._ui_ready = True
+
+    def shutdown(self):
+        """Prevent late worker results from touching a destroyed window."""
+        with self._state_lock:
+            self._closing = True
+        with self._ui_lock:
+            self._ui_ready = False
+            self._window = None
+        with self._tweak_lock:
+            event = getattr(self, '_tweak_apply_event', None)
+        if event:
+            event.set()
+
+    def _evaluate_js(self, script):
+        """Serialize JavaScript calls and ignore results after shutdown."""
+        with self._ui_lock:
+            window = self._window
+            if self._closing or not self._ui_ready or window is None:
+                return False
+            try:
+                window.evaluate_js(script)
+                return True
+            except Exception:
+                return False
 
     def push_log(self, text):
-        if self._window:
-            safe = text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
-            self._window.evaluate_js(f"window._appendLog('{safe}')")
+        self._evaluate_js('window._appendLog(%s)' % json.dumps(text))
 
     def signal_error(self):
-        if self._window:
-            self._window.evaluate_js("window._signalError()")
+        self._evaluate_js('window._signalError()')
 
     def _notify(self, event, data='null'):
-        if self._window:
-            self._window.evaluate_js(f"window._onEvent('{event}', {data})")
+        self._evaluate_js('window._onEvent(%s, %s)' % (json.dumps(event), data))
+
+    def _start_camera_task(self, name, target):
+        """Start at most one camera/USB operation at a time."""
+        with self._state_lock:
+            if self._closing:
+                return False
+            if self._active_camera_task is not None:
+                active = self._active_camera_task
+                self._notify('task_rejected', json.dumps({
+                    'requested': name,
+                    'active': active,
+                }))
+                return False
+            self._active_camera_task = name
+
+        def run():
+            try:
+                target()
+            finally:
+                with self._state_lock:
+                    if self._active_camera_task == name:
+                        self._active_camera_task = None
+
+        threading.Thread(target=run, name='pmca-%s' % name, daemon=True).start()
+        return True
 
     def get_config(self):
         return {
@@ -133,7 +193,7 @@ class Api:
             except Exception:
                 traceback.print_exc()
                 self._notify('apps_loaded', '[]')
-        threading.Thread(target=task, daemon=True).start()
+        threading.Thread(target=task, name='pmca-app-list', daemon=True).start()
 
     def get_info(self):
         def task():
@@ -147,7 +207,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"info"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('info', task)
 
     def install_app(self, package):
         def task():
@@ -161,7 +221,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"install"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('install', task)
 
     def select_apk(self):
         file_types = ('APK Files (*.apk)', 'All Files (*.*)')
@@ -169,14 +229,16 @@ class Api:
             webview.FileDialog.OPEN, file_types=file_types
         )
         if result and len(result) > 0:
-            self._selected_apk = result[0]
+            with self._state_lock:
+                self._selected_apk = result[0]
             self._notify('apk_selected', json.dumps(os.path.basename(result[0])))
         return None
 
     def install_apk(self):
         def task():
             try:
-                apk_path = getattr(self, '_selected_apk', None)
+                with self._state_lock:
+                    apk_path = self._selected_apk
                 if apk_path:
                     self._notify('task_start', '"install"')
                     with open(apk_path, 'rb') as f:
@@ -185,7 +247,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"install"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('install', task)
 
     def firmware_update(self):
         def task():
@@ -202,7 +264,7 @@ class Api:
             except Exception:
                 traceback.print_exc()
                 self._notify('task_end', '"firmware"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('firmware', task)
 
     def start_tweaks_updater(self):
         def task():
@@ -218,7 +280,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"tweaks"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('tweaks', task)
 
     def start_tweaks_service(self):
         def task():
@@ -234,7 +296,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"tweaks"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('tweaks', task)
 
     def _run_tweaks(self, backend):
         backend.start()
@@ -245,45 +307,64 @@ class Api:
                 print('No tweaks available')
                 return
 
-            self._tweak_interface = tweaks
-            data = [{'id': t[0], 'desc': t[1], 'enabled': bool(t[2]), 'value': t[3]} for t in tweak_list]
-            self._tweaks_data = data
-
-            event = threading.Event()
-            self._tweak_apply_event = event
+            with self._tweak_lock:
+                self._tweak_interface = tweaks
+                data = [{'id': t[0], 'desc': t[1], 'enabled': bool(t[2]), 'value': t[3]} for t in tweak_list]
+                self._tweaks_data = data
+                self._tweak_apply_started = False
+                event = threading.Event()
+                self._tweak_apply_event = event
             self._notify('tweaks_available', json.dumps(data))
             event.wait()
         finally:
             backend.stop()
+            with self._tweak_lock:
+                self._tweak_interface = None
+                self._tweak_apply_started = False
 
     def set_tweak(self, tweak_id, enabled):
-        if self._tweak_interface:
+        with self._tweak_lock:
+            if not self._tweak_interface or self._tweak_apply_started:
+                return False
             self._tweak_interface.setEnabled(tweak_id, enabled)
             tweak_list = list(self._tweak_interface.getTweaks())
             data = [{'id': t[0], 'desc': t[1], 'enabled': bool(t[2]), 'value': t[3]} for t in tweak_list]
             self._tweaks_data = data
-            self._notify('tweaks_available', json.dumps(data))
+        self._notify('tweaks_available', json.dumps(data))
+        return True
 
     def apply_tweaks(self):
+        with self._tweak_lock:
+            if not self._tweak_interface or self._tweak_apply_started:
+                return False
+            self._tweak_apply_started = True
+        self._notify('tweaks_applying')
+
         def task():
             try:
-                if self._tweak_interface:
-                    self._notify('tweaks_applying')
+                with self._tweak_lock:
+                    tweaks = self._tweak_interface
+                if tweaks:
                     print('Applying tweaks...')
-                    self._tweak_interface.apply()
+                    tweaks.apply()
                     print('Tweaks applied successfully')
             except Exception:
                 traceback.print_exc()
             finally:
                 self._notify('tweaks_done')
-                if hasattr(self, '_tweak_apply_event'):
-                    self._tweak_apply_event.set()
-        threading.Thread(target=task, daemon=True).start()
+                with self._tweak_lock:
+                    event = getattr(self, '_tweak_apply_event', None)
+                if event:
+                    event.set()
+        threading.Thread(target=task, name='pmca-apply-tweaks', daemon=True).start()
+        return True
 
     def cancel_tweaks(self):
         self._notify('tweaks_done')
-        if hasattr(self, '_tweak_apply_event'):
-            self._tweak_apply_event.set()
+        with self._tweak_lock:
+            event = getattr(self, '_tweak_apply_event', None)
+        if event:
+            event.set()
 
     def read_wifi(self, multi=False):
         def task():
@@ -320,7 +401,7 @@ class Api:
                 self._notify('wifi_result', json.dumps({'error': 'Failed to read WiFi settings'}))
             finally:
                 self._notify('task_end', '"wifi"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('wifi', task)
 
     def write_wifi(self, networks, multi=False):
         def task():
@@ -354,7 +435,7 @@ class Api:
                 self._notify('wifi_write_result', json.dumps({'error': 'Failed to write WiFi settings'}))
             finally:
                 self._notify('task_end', '"wifi"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('wifi', task)
 
     def _get_camera_model_serial(self):
         """Get camera model and serial via info command (MTP/MSC mode)."""
@@ -459,7 +540,7 @@ class Api:
                 self._notify('backup_status', json.dumps({'message': 'Backup download failed.', 'done': True}))
             finally:
                 self._notify('task_end', '"backup"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('backup', task)
 
     def restore_backup(self, mode='updater'):
         def task():
@@ -524,7 +605,7 @@ class Api:
                 self._notify('backup_status', json.dumps({'message': 'Backup restore failed.', 'done': True}))
             finally:
                 self._notify('task_end', '"backup"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_task('backup', task)
 
     def run_diagnostics(self):
         def task():
@@ -542,14 +623,38 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"system"')
-        threading.Thread(target=task, daemon=True).start()
+        threading.Thread(target=task, name='pmca-diagnostics', daemon=True).start()
 
 
-if getattr(sys, 'frozen', False):
-    _BASE_DIR = sys._MEIPASS
-else:
-    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(_BASE_DIR, 'assets')
+_REQUIRED_WEB_ASSETS = (
+    'assets/index.html',
+    'assets/app.js',
+    'assets/style.css',
+    'assets/icon.png',
+)
+
+
+def get_startup_page():
+    """Return a valid file URL or a self-contained resource error page."""
+    missing = [path for path in _REQUIRED_WEB_ASSETS
+               if not os.path.isfile(get_bundle_resource_path(path))]
+    if not missing:
+        return {'url': Path(get_bundle_resource_path('assets/index.html')).as_uri()}
+
+    items = ''.join('<li><code>%s</code></li>' % path for path in missing)
+    return {'html': '''<!doctype html><html><head><meta charset="utf-8">
+<title>PMCA resource error</title></head><body style="font-family:sans-serif;padding:2rem">
+<h1>PMCA could not start</h1><p>Required application resources are missing:</p>
+<ul>%s</ul><p>Reinstall or rebuild the application with the complete assets directory.</p>
+</body></html>''' % items}
+
+
+def get_webview_start_options():
+    """Avoid the incompatible PNG runtime icon on Windows only."""
+    icon_path = get_bundle_resource_path('icon.png')
+    if sys.platform != 'win32' and os.path.isfile(icon_path):
+        return {'icon': icon_path}
+    return {}
 
 
 def main():
@@ -558,18 +663,22 @@ def main():
     capture.start()
 
     title = 'PMCA Camera Utility' + (' ' + version if version else '')
-    icon_path = os.path.join(_BASE_DIR, 'icon.png')
-    url = 'file://' + os.path.join(ASSETS_DIR, 'index.html')
     window = webview.create_window(
         title,
-        url=url,
         js_api=api,
         width=560,
         height=672,
         min_size=(400, 400),
+        **get_startup_page(),
     )
     api.set_window(window)
-    webview.start(icon=icon_path)
+    window.events.loaded += api.mark_ready
+    window.events.closed += api.shutdown
+
+    # pywebview's runtime icon is supported by GTK/Qt. On Windows the PNG is
+    # interpreted as a WinForms .ico and crashes before the window is shown;
+    # frozen executables must set their Windows icon during packaging instead.
+    webview.start(**get_webview_start_options())
 
 
 if __name__ == '__main__':

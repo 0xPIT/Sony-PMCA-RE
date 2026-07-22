@@ -8,6 +8,7 @@ import struct
 import zipfile
 
 import config
+from ..resources import get_bundle_resource_path
 from ..apk import *
 from .. import appstore
 from .. import firmware
@@ -23,7 +24,7 @@ from ..usb.driver.generic import *
 from ..usb.sony import *
 from ..util import http
 
-scriptRoot = getattr(sys, '_MEIPASS', os.path.dirname(__file__) + '/../..')
+scriptRoot = get_bundle_resource_path('')
 
 
 def printStatus(status):
@@ -663,7 +664,8 @@ def senserShellCommand(driverName=None, complete=None):
    if not isinstance(device.driver, GenericUsbDriver):
     print('Error: Only libusb drivers are supported for switching to service mode.')
     if sys.platform == 'win32':
-     print('Please use Zadig to install the libusb-win32 driver for the mass storage device.')
+      print('The exact mass-storage USB identity needs a compatible libusb driver binding.')
+      print('Verify VID, PID, interface and current driver before making any manual driver change.')
     return
 
    print('Switching to service mode')
@@ -690,7 +692,8 @@ def senserShellCommand(driverName=None, complete=None):
    if not isinstance(device.driver, GenericUsbDriver):
     print('Error: Only libusb drivers are supported for service mode.')
     if sys.platform == 'win32':
-     print('Please use Zadig to install the libusb-win32 driver for the service mode device.')
+      print('The exact service-mode USB identity needs a compatible libusb driver binding.')
+      print('Do not replace the normal MTP or mass-storage driver; verify identity and rollback first.')
     return
 
    print('Authenticating')

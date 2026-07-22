@@ -136,6 +136,10 @@ window._onEvent = function(event, data) {
             setButtonsDisabled(data, false);
             break;
 
+        case 'task_rejected':
+            showToast('Cannot start ' + data.requested + ' while ' + data.active + ' is running');
+            break;
+
         case 'wifi_result':
             if (data.error) {
                 document.getElementById('wifi-list').innerHTML =
@@ -182,34 +186,25 @@ window._onEvent = function(event, data) {
 
 function setButtonsDisabled(taskType, disabled) {
     var buttons;
-    switch (taskType) {
-        case 'info':
-            buttons = ['btn-info'];
-            break;
-        case 'install':
-            buttons = ['btn-install', 'btn-refresh-apps'];
-            break;
-        case 'tweaks':
-            buttons = ['btn-tweaks-start'];
-            break;
-        case 'wifi':
-            buttons = ['btn-wifi-read', 'btn-wifi-write'];
-            break;
-        case 'firmware':
-            buttons = ['btn-firmware'];
-            break;
-        case 'backup':
-            buttons = ['btn-backup-download', 'btn-backup-restore'];
-            break;
-        case 'system':
-            buttons = ['btn-diagnose'];
-            break;
-        default:
-            buttons = [];
+    var cameraTasks = ['info', 'install', 'tweaks', 'wifi', 'firmware', 'backup'];
+    if (cameraTasks.indexOf(taskType) !== -1) {
+        buttons = [
+            'btn-info', 'btn-wifi-read', 'btn-wifi-write',
+            'btn-backup-download', 'btn-backup-restore', 'backup-mode-select',
+            'btn-firmware', 'btn-install', 'btn-select-apk',
+            'btn-tweaks-start', 'tweaks-mode-select'
+        ];
+    } else if (taskType === 'system') {
+        buttons = ['btn-diagnose'];
+    } else {
+        buttons = [];
     }
     for (var i = 0; i < buttons.length; i++) {
         var el = document.getElementById(buttons[i]);
         if (el) el.disabled = disabled;
+    }
+    if (!disabled && cameraTasks.indexOf(taskType) !== -1) {
+        updateInstallButton();
     }
 }
 

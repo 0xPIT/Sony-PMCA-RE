@@ -3,13 +3,16 @@
 import os, shutil, subprocess, sys
 
 excludes = ['bz2', 'cffi', 'Crypto', 'doctest', 'ftplib', 'gmpy', 'gmpy2', 'lzma', 'M2Crypto', 'numpy', 'plistlib', 'py_compile', 'tack', 'tarfile', 'tracemalloc']
-if sys.platform != 'win32':
+if sys.platform == 'win32':
+ excludes.remove('cffi')
+ excludes.remove('plistlib')
+else:
  excludes.append('pmca.usb.driver.windows')
 if sys.platform != 'darwin':
  excludes.append('pmca.usb.driver.osx')
 
 # Get version from git
-version = subprocess.check_output(['git', 'describe', '--always', '--tags']).decode('ascii').strip()
+version = subprocess.check_output(['git', 'describe', '--always', '--tags', '--dirty']).decode('ascii').strip()
 with open('frozenversion.py', 'w') as f:
  f.write('version = "%s"' % version)
 
