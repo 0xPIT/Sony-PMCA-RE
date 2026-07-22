@@ -82,3 +82,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         files: artifacts/**/*
+        draft: false
+        prerelease: false
+        fail_on_unmatched_files: false
