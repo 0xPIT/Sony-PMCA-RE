@@ -1,53 +1,71 @@
 name: Build
 on: push
 jobs:
-  PyInstaller:
+  build:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2019, macos-10.15]
+        include:
+          - os: windows-latest
+            artifact: Windows
+          - os: macos-latest
+            artifact: macOS
+          - os: ubuntu-latest
+            artifact: Linux
     defaults:
       run:
         shell: bash
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions/setup-python@v2
+    - uses: actions/checkout@v4
       with:
-        python-version: 3.6
-    - name: Install libusb (windows)
+        fetch-depth: 0
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install libusb (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: |
-        Invoke-WebRequest http://jaist.dl.sourceforge.net/project/libusb-win32/libusb-win32-releases/1.2.6.0/libusb-win32-bin-1.2.6.0.zip -OutFile libusb-win32-bin-1.2.6.0.zip
-        Expand-Archive libusb-win32-bin-1.2.6.0.zip .
-        Move-Item libusb-win32-bin-1.2.6.0\bin\amd64\libusb0.dll .
+        Invoke-WebRequest https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.7z -OutFile libusb.7z
+        7z x libusb.7z -olibusb
+        Copy-Item libusb\VS2022\MS64\dll\libusb-1.0.dll .
         echo $env:GITHUB_WORKSPACE | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-    - name: Install libusb (macos)
+
+    - name: Install libusb (macOS)
       if: runner.os == 'macOS'
+      run: brew install libusb
+
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
       run: |
-        brew install libusb
-    - name: Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y libusb-1.0-0-dev libgirepository1.0-dev gir1.2-webkit2-4.1
+
+    - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
     - name: Build
       run: |
         python -OO -m PyInstaller pmca-console.spec
-        python -OO -m PyInstaller pmca-gui.spec
+        python -OO -m PyInstaller pmca-web.spec
+
     - name: Test
       run: |
         dist/pmca-console* -h
+
     - name: Upload
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
-        name: ${{ runner.os }} binaries
+        name: ${{ matrix.artifact }}
         path: dist/*
+
     - name: Release
-      if: ${{ startsWith(github.ref, 'refs/tags/') && runner.os != 'Windows' }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        tag="${GITHUB_REF##*/}"
-        assets="$(find dist/* -exec echo -a {} \;)"
-        hub release create $assets -m "$tag" "$tag" || hub release edit $assets -m "" "$tag"
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/*

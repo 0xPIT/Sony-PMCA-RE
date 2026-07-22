@@ -14,21 +14,25 @@ with open('frozenversion.py', 'w') as f:
  f.write('version = "%s"' % version)
 
 # Generate filename
-suffix = {'linux2': '-linux', 'win32': '-win', 'darwin': '-osx'}
+suffix = {'linux': '-linux', 'win32': '-win', 'darwin': '-osx'}
 output += '-' + version + suffix.get(sys.platform, '')
 
 # Analyze files
 a = Analysis([input], excludes=excludes, datas=[('certs/*', 'certs')])
 a.datas = [d for d in a.datas if not (d[0].startswith('certifi') and not d[0].endswith('cacert.pem'))]
 a.datas += Tree('updatershell/fdat', 'updatershell/fdat')
+if os.path.isdir('assets'):
+ a.datas += Tree('assets', 'assets')
+if os.path.isfile('icon.png'):
+ a.datas += [('icon.png', 'icon.png', 'DATA')]
 
 # Generate executable
 pyz = PYZ(a.pure, a.zipped_data)
-exe = EXE(pyz, a.scripts, a.binaries, a.zipfiles, a.datas, name=output, console=console)
 if sys.platform == 'darwin' and not console:
- app = BUNDLE(exe, name=output+'.app')
- os.remove(exe.name)
- subprocess.check_call(['hdiutil', 'create', '-ov', DISTPATH+'/'+output+'.dmg', '-srcfolder', app.name])
- shutil.rmtree(app.name)
+ exe = EXE(pyz, a.scripts, exclude_binaries=True, name=output, console=console)
+ coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name=output)
+ app = BUNDLE(coll, name=output+'.app')
+else:
+ exe = EXE(pyz, a.scripts, a.binaries, a.zipfiles, a.datas, name=output, console=console)
 
 os.remove('frozenversion.py')

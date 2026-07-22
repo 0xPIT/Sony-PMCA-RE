@@ -545,7 +545,11 @@ class Api:
         threading.Thread(target=task, daemon=True).start()
 
 
-ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+if getattr(sys, 'frozen', False):
+    _BASE_DIR = sys._MEIPASS
+else:
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(_BASE_DIR, 'assets')
 
 
 def main():
@@ -554,7 +558,7 @@ def main():
     capture.start()
 
     title = 'PMCA Camera Utility' + (' ' + version if version else '')
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icon.png')
+    icon_path = os.path.join(_BASE_DIR, 'icon.png')
     url = 'file://' + os.path.join(ASSETS_DIR, 'index.html')
     window = webview.create_window(
         title,
