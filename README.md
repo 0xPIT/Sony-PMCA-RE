@@ -46,8 +46,8 @@ Download the [latest stable release](https://github.com/ma1co/Sony-PMCA-RE/relea
 
 ### macOS
 
-[!TIP]
-On recent macOS Tahoe, this tool seems to work fine without Sony's proprietary drivers.
+> [!TIP]
+> On recent macOS Tahoe, this tool seems to work fine without Sony's proprietary drivers.
 
 macOS binaries are also distributed, but less tested than the Windows equivalents. Getting the USB drivers to work may require some fiddling. To communicate with cameras in mass storage mode, Sony's [Camera Driver](https://support.d-imaging.sony.co.jp/mac/driver/11/ja/) has to be installed. Make sure to close all applications which could access USB drivers, including Photos, Dropbox and Google Drive.
 
