@@ -83,6 +83,7 @@ jobs:
       run: |
         gh release create ${{ github.ref_name }} artifacts/**/* \
           --repo ${{ github.repository }} \
-          --generate-release-notes
+          --generate-notes
+          --latest
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
