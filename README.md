@@ -9,7 +9,7 @@ This tool interfaces with Sony digital cameras through USB. It allows to tweak s
 
 - New web-based UI (pywebview), replacing the old Tkinter GUI
 - A **host system diagnostics tool** that checks your PC/Mac against all setup issues previously reported here to help first-time users
-- Backup/Restore from the UI
+- Backup/Restore from the UI, optionally also as parsed properties as implemented [here](https://github.com/ma1co/Sony-PMCA-RE/commit/00edc8b65e61797955fdd904d87d5c14434b597a)
 - Update WiFi Settings from the UI (does not work on my camera – **not tested**)
 - Add Tweak: Switch PAL/NTSC (solution found in issues – **not tested**)
 - Copy/paste of camera details (after clicking "Get camera info")

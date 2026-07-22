@@ -22,6 +22,7 @@ from pmca.platform.backend.senser import SenserPlatformBackend
 from pmca.platform.backend.usb import UsbPlatformBackend
 from pmca.platform.tweaks import TweakInterface
 from pmca.diagnostics import run_all_checks
+from pmca.backup import BackupFile
 
 if getattr(sys, 'frozen', False):
     from frozenversion import version
@@ -368,7 +369,26 @@ class Api:
             pass
         return None, None
 
-    def download_backup(self, mode='updater'):
+    @staticmethod
+    def _backup_to_text(data):
+        output = io.StringIO()
+        def writeHexDump(raw, n=16, indent=0):
+            for i in range(0, len(raw), n):
+                line = bytearray(raw[i:i+n])
+                hex_str = ' '.join('%02x' % c for c in line)
+                text = ''.join(chr(c) if 0x21 <= c <= 0x7e else '.' for c in line)
+                output.write('%*s%-*s %s\n' % (indent, '', n*3, hex_str, text))
+        binf = io.BytesIO(data)
+        for id, property in BackupFile(binf).listProperties():
+            output.write('id=0x%08x, size=0x%04x, attr=0x%02x:\n' % (id, len(property.data), property.attr))
+            writeHexDump(property.data, indent=2)
+            if property.resetData and property.resetData != property.data:
+                output.write('reset data:\n')
+                writeHexDump(property.resetData, indent=2)
+            output.write('\n')
+        return output.getvalue()
+
+    def download_backup(self, mode='updater', parsedtextproperties=False):
         def task():
             try:
                 self._notify('task_start', '"backup"')
@@ -408,18 +428,29 @@ class Api:
                 if serial:
                     parts.append(serial)
                 parts.append(timestamp)
-                filename = 'Backup_%s.bin' % '_'.join(parts)
+
+                if parsedtextproperties:
+                    filename = 'Backup_%s.txt' % '_'.join(parts)
+                    file_types = ('Text Files (*.txt)', 'All Files (*.*)')
+                else:
+                    filename = 'Backup_%s.bin' % '_'.join(parts)
+                    file_types = ('Backup Files (*.bin)', 'All Files (*.*)')
 
                 result = self._window.create_file_dialog(
                     webview.FileDialog.SAVE,
-                    file_types=('Backup Files (*.bin)', 'All Files (*.*)'),
+                    file_types=file_types,
                     save_filename=filename,
                 )
                 if result:
                     path = result if isinstance(result, str) else result[0]
-                    with open(path, 'wb') as f:
-                        f.write(backup_data[0])
-                    print('Backup saved to %s (%d bytes)' % (path, len(backup_data[0])))
+                    if parsedtextproperties:
+                        with open(path, 'w') as f:
+                            f.write(self._backup_to_text(backup_data[0]))
+                        print('Backup text saved to %s (%d bytes raw)' % (path, len(backup_data[0])))
+                    else:
+                        with open(path, 'wb') as f:
+                            f.write(backup_data[0])
+                        print('Backup saved to %s (%d bytes)' % (path, len(backup_data[0])))
                     self._notify('backup_status', json.dumps({'message': 'Backup saved: %s' % os.path.basename(path), 'done': True}))
                 else:
                     self._notify('backup_status', json.dumps({'message': 'Save cancelled.', 'done': True}))

@@ -13,7 +13,7 @@ var api = {
     readWifi: function(multi) { pywebview.api.read_wifi(multi); },
     writeWifi: function(networks, multi) { pywebview.api.write_wifi(networks, multi); },
     runDiagnostics: function() { pywebview.api.run_diagnostics(); },
-    downloadBackup: function(mode) { pywebview.api.download_backup(mode); },
+    downloadBackup: function(mode, parsedtextproperties) { pywebview.api.download_backup(mode, parsedtextproperties); },
     restoreBackup: function(mode) { pywebview.api.restore_backup(mode); },
 };
 
@@ -376,7 +376,8 @@ function escapeHtml(str) {
 
 function downloadBackup() {
     var mode = document.getElementById('backup-mode-select').value;
-    api.downloadBackup(mode);
+    var parsedtextproperties = document.getElementById('backup-parsedtextproperties').checked;
+    api.downloadBackup(mode, parsedtextproperties);
 }
 
 function restoreBackup() {
