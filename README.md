@@ -119,6 +119,8 @@ Normal MTP and mass-storage operation should use the native Windows drivers when
 
 Do not replace a normal MTP or mass-storage driver pre-emptively. Before any manual driver test, record the exact device name, VID, PID, interface number, device-instance ID, physical port, current driver and intended rollback. If several Sony devices are present or the normal and service-mode identities cannot be distinguished, stop.
 
+Zadig remains a useful tool for inspecting or installing a libusb-compatible binding when a specifically identified PMCA USB path requires one. Select only the exact normal or service-mode identity being tested; do not use it to replace a working native MTP or mass-storage binding.
+
 WinUSB, libusbK and libusb-win32 are candidates to validate for the specific identity; none is a universal recommendation. Confirm that the PMCA/PyUSB/libusb combination supports the selected binding and document restoration of the original driver before proceeding. PMCA does not install or replace Windows drivers automatically. See [Windows validation](docs/WindowsValidation.md) for the test matrix.
 
 ## Is it safe?

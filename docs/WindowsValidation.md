@@ -51,15 +51,16 @@ The preliminary executable `dist\pmca-web-v0.1.0-win.exe` (18,510,311 bytes; SHA
 4. PyInstaller excluded `cffi`, then `plistlib`, from the Windows dependency chain. Windows now includes both while other platforms retain the previous exclusions.
 5. Early and late worker output could reach WebView outside its valid lifetime. UI calls now wait for readiness, serialize, and stop after shutdown.
 6. Tweak state could be applied more than once. Shared state is locked, apply is guarded, and shutdown releases a waiting session.
-7. Diagnostics conflated a missing libusb runtime with a Windows device binding. They now report these separately and do not prescribe one universal driver.
+7. Diagnostics conflated a missing libusb runtime with a Windows device binding. They now report these separately, retain conditional Zadig troubleshooting for an exact USB identity, and do not prescribe one universal driver.
 8. Build filenames could conceal source changes. `git describe --dirty` now marks tracked dirty builds while preserving clean tag naming.
 
 ## Automated validation
 
-Sixteen unattended `unittest` tests passed in the fresh validation virtual environment:
+Sixteen unattended `unittest` tests passed in the fresh validation virtual environment. Four focused Windows diagnostic-message tests were added after maintainer feedback, bringing the current automated total to twenty:
 
 - eight resource/startup tests covering source and frozen resolution, path confinement, Unicode/spaces, missing assets, valid file URIs, and platform icon behavior;
 - eight Web API tests covering duplicate/incompatible task admission, JSON escaping, JavaScript serialization, UI readiness, shutdown behavior, tweak-session release, and apply-once behavior.
+- four Windows diagnostic tests covering accessible devices, conditional Zadig guidance, no-device behavior, and the runtime-DLL-versus-binding distinction.
 
 All tracked Python and spec files passed `py_compile`. `git diff --check` passed before and after the build. Diagnostics executed without a camera and returned neutral warnings for unavailable libusb/device access. JavaScript syntax validation also passed during the per-commit checks.
 
@@ -105,7 +106,7 @@ The code selects native Windows WPD for MTP and native SCSI pass-through for mas
 | Sony service mode | Project recognizes VID `054c`, PID `02a9` or `0336`; interface pending | Pending observation | None changed | PyUSB/libusb vendor-specific | Not hardware-tested | Not hardware-tested | Not tested | `PARTIALLY_IMPLEMENTED` |
 | Composite interface | Pending descriptors | Pending observation | None changed | Pending descriptor/backend match | Not hardware-tested | Not hardware-tested | Not tested | `NOT_APPLICABLE` until observed |
 
-Before any future driver experiment, record the exact device name, VID, PID, interface, instance ID, physical port, descriptors, current binding, intended PMCA backend, and rollback procedure. Keep normal MTP/mass-storage and re-enumerated service identities separate. WinUSB, libusbK, and libusb-win32 are only candidates for a specifically observed identity; none is universally recommended.
+Before any future driver experiment, record the exact device name, VID, PID, interface, instance ID, physical port, descriptors, current binding, intended PMCA backend, and rollback procedure. Keep normal MTP/mass-storage and re-enumerated service identities separate. Zadig remains relevant for inspecting or installing a binding on the specifically observed identity; WinUSB, libusbK, and libusb-win32 are candidates rather than universal recommendations.
 
 ## Remaining hardware limitations
 

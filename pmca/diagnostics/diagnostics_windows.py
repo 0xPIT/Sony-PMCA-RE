@@ -7,8 +7,8 @@ import sys
 from . import DiagResult
 
 
-def check_libusb_device_access():
- """Check libusb device access without recommending an unverified driver."""
+def check_zadig_driver():
+ """Check whether the exact Sony USB identity is accessible through libusb."""
  try:
   import usb.core
   devices = list(usb.core.find(find_all=True, idVendor=0x054c))
@@ -16,23 +16,27 @@ def check_libusb_device_access():
    for dev in devices:
     try:
      dev.get_active_configuration()
-     return DiagResult('pass', 'libusb device access',
+     return DiagResult('pass', 'USB driver (Zadig/libusb)',
       'Sony device accessible via libusb (PID 0x%04x).' % dev.idProduct, None)
     except usb.core.USBError as e:
      if 'Entity not found' in str(e) or 'Access' in str(e):
-      return DiagResult('fail', 'libusb device access',
+      return DiagResult('fail', 'USB driver (Zadig/libusb)',
        'Sony device found but not accessible. Wrong driver or access denied.',
-       'Record VID, PID, interface number, instance ID and current driver. Test only the exact identity required by PMCA, with a documented rollback.')
-   return DiagResult('warn', 'libusb device access',
+       'If this exact USB identity must use PMCA\'s libusb path, Zadig can inspect or install a compatible binding. '
+       'Do not replace the normal MTP or mass-storage driver. Record VID, PID, interface number, instance ID and current driver, '
+       'and document rollback before changing anything.')
+   return DiagResult('warn', 'USB driver (Zadig/libusb)',
     'Sony device found but could not verify driver.',
-    'Record the exact USB identity and current binding before considering a manual driver test.')
-  return DiagResult('warn', 'libusb device access',
+    'Record the exact USB identity and current binding first. Use Zadig only if that identity must use PMCA\'s libusb path, '
+    'and prepare rollback before selecting WinUSB, libusbK or libusb-win32.')
+  return DiagResult('warn', 'USB driver (Zadig/libusb)',
    'No Sony USB device detected to check driver.',
-   'Connect your camera first, then re-run diagnostics.')
+   'Connect the camera and re-run diagnostics before considering Zadig or any driver change.')
  except Exception as e:
-  return DiagResult('warn', 'libusb device access',
+  return DiagResult('warn', 'USB driver (Zadig/libusb)',
    'Cannot check driver: %s' % str(e),
-   'Verify that the libusb-1.0 runtime DLL is available before evaluating any device-driver binding.')
+   'Verify the libusb-1.0 runtime DLL first. Zadig changes a device binding; it does not provide the runtime DLL. '
+   'Do not change a driver until the exact USB identity and rollback path are known.')
 
 
 def check_libusb_dll():
@@ -88,6 +92,7 @@ def check_service_mode_driver():
      return DiagResult('fail', 'Service mode driver',
       'Service mode device found but not accessible.',
       'Record this service-mode identity separately from normal MTP/mass storage. '
+      'If it requires a libusb binding, Zadig can inspect or install one for this exact identity. '
       'Verify VID, PID, interface, current driver, supported backend and rollback before any manual change.')
   return DiagResult('pass', 'Service mode driver',
    'No service mode device detected (camera not in service mode — this is normal).', None)
@@ -130,7 +135,7 @@ def run_windows_checks():
  return [
   check_windows_version(),
   check_libusb_dll(),
-  check_libusb_device_access(),
+  check_zadig_driver(),
   check_service_mode_driver(),
   check_wmp_not_claiming(),
  ]
