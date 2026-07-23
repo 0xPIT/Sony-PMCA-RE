@@ -1,71 +1,82 @@
-var api = {
-    getInfo: function() { pywebview.api.get_info(); },
-    loadApps: function() { pywebview.api.load_apps(); },
-    installApp: function(pkg) { pywebview.api.install_app(pkg); },
-    selectApk: function() { pywebview.api.select_apk(); },
-    installApk: function() { pywebview.api.install_apk(); },
-    firmwareUpdate: function() { pywebview.api.firmware_update(); },
-    startTweaksUpdater: function() { pywebview.api.start_tweaks_updater(); },
-    startTweaksService: function() { pywebview.api.start_tweaks_service(); },
-    setTweak: function(id, enabled) { pywebview.api.set_tweak(id, enabled); },
-    applyTweaks: function() { pywebview.api.apply_tweaks(); },
-    cancelTweaks: function() { pywebview.api.cancel_tweaks(); },
-    readWifi: function(multi) { pywebview.api.read_wifi(multi); },
-    writeWifi: function(networks, multi) { pywebview.api.write_wifi(networks, multi); },
-    runDiagnostics: function() { pywebview.api.run_diagnostics(); },
-    downloadBackup: function(mode, parsedtextproperties) { pywebview.api.download_backup(mode, parsedtextproperties); },
-    restoreBackup: function(mode) { pywebview.api.restore_backup(mode); },
-};
+/*
+ * PMCA Camera Utility - web frontend (Preact via embedded htm/preact standalone).
+ *
+ * The Python backend (pmca-web.py) pushes events into the page by calling the
+ * globals window._onEvent / window._appendLog / window._signalError. Those are
+ * wired to a tiny event bus that components subscribe to with the useBus() hook.
+ */
+const { html, render, createContext, useState, useEffect, useRef, useCallback, useContext } = htmPreact;
 
-var logEl = document.getElementById('log');
+/* ------------------------------------------------------------------ *
+ * Event bus + Python -> JS bridge
+ * ------------------------------------------------------------------ */
+const bus = (() => {
+    const listeners = {};
+    return {
+        on(event, cb) {
+            (listeners[event] || (listeners[event] = [])).push(cb);
+            return () => { listeners[event] = listeners[event].filter((f) => f !== cb); };
+        },
+        emit(event, data) {
+            (listeners[event] || []).forEach((cb) => cb(data));
+        },
+    };
+})();
 
-var logContainer = document.getElementById('log-container');
+window._onEvent = (event, data) => bus.emit(event, data);
+window._appendLog = (text) => bus.emit('log', text);
+window._signalError = () => bus.emit('error');
 
-window._appendLog = function(text) {
-    logEl.textContent += text;
-    logEl.scrollTop = logEl.scrollHeight;
-};
-
-logEl.addEventListener('click', function() {
-    logContainer.classList.remove('has-error');
-});
-
-window._signalError = function() {
-    logContainer.classList.add('has-error');
-};
-
-function toggleLog() {
-    logContainer.classList.toggle('expanded');
-    if (logContainer.classList.contains('expanded')) {
-        logContainer.classList.remove('has-error');
-    }
+/** Subscribe to a bus event for the lifetime of the component. */
+function useBus(event, handler) {
+    const ref = useRef(handler);
+    ref.current = handler;
+    useEffect(() => bus.on(event, (data) => ref.current(data)), [event]);
 }
 
-function clearLog() {
-    logEl.textContent = '';
-    logContainer.classList.remove('has-error');
+/* ------------------------------------------------------------------ *
+ * Python API wrapper
+ * ------------------------------------------------------------------ */
+const call = (name, ...args) =>
+    (window.pywebview && pywebview.api && pywebview.api[name])
+        ? pywebview.api[name](...args)
+        : Promise.resolve();
+
+const api = {
+    getConfig: () => call('get_config'),
+    loadApps: () => call('load_apps'),
+    getInfo: () => call('get_info'),
+    installApp: (pkg) => call('install_app', pkg),
+    selectApk: () => call('select_apk'),
+    installApk: () => call('install_apk'),
+    firmwareUpdate: () => call('firmware_update'),
+    startTweaksUpdater: () => call('start_tweaks_updater'),
+    startTweaksService: () => call('start_tweaks_service'),
+    setTweak: (id, enabled) => call('set_tweak', id, enabled),
+    applyTweaks: () => call('apply_tweaks'),
+    cancelTweaks: () => call('cancel_tweaks'),
+    readWifi: (multi) => call('read_wifi', multi),
+    writeWifi: (nets, multi) => call('write_wifi', nets, multi),
+    downloadBackup: (mode, parsed) => call('download_backup', mode, parsed),
+    restoreBackup: (mode) => call('restore_backup', mode),
+    pluginCall: (id, method, ...args) => call('plugin_call', id, method, ...args),
+};
+
+function onReady(cb) {
+    if (window.pywebview && window.pywebview.api) cb();
+    else window.addEventListener('pywebviewready', cb, { once: true });
 }
 
-function copyLog() {
-    var text = logEl.textContent;
+function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() { showToast('Copied to clipboard'); }).catch(function() { copyFallback(text); showToast('Copied to clipboard'); });
-    } else {
-        copyFallback(text);
-        showToast('Copied to clipboard');
+        return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
     }
+    fallbackCopy(text);
+    return Promise.resolve();
 }
 
-function showToast(msg) {
-    var el = document.getElementById('toast');
-    el.textContent = msg;
-    el.classList.add('visible');
-    clearTimeout(el._timeout);
-    el._timeout = setTimeout(function() { el.classList.remove('visible'); }, 3000);
-}
-
-function copyFallback(text) {
-    var ta = document.createElement('textarea');
+function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
     ta.style.left = '-9999px';
@@ -75,411 +86,526 @@ function copyFallback(text) {
     document.body.removeChild(ta);
 }
 
-window._onEvent = function(event, data) {
-    switch (event) {
-        case 'camera_info':
-            var cells = document.querySelectorAll('#camera-info-display .camera-info-value');
-            var dataMap = {};
-            if (data && data.length) {
-                for (var i = 0; i < data.length; i++) {
-                    dataMap[data[i].key] = data[i].value;
-                }
-            }
-            for (var i = 0; i < cells.length; i++) {
-                var field = cells[i].getAttribute('data-field');
-                if (dataMap[field] !== undefined) {
-                    cells[i].textContent = dataMap[field];
-                    cells[i].classList.remove('camera-info-placeholder');
-                    cells[i].classList.add('copyable');
-                    cells[i].closest('tr').style.display = '';
-                } else {
-                    cells[i].textContent = '—';
-                    cells[i].classList.add('camera-info-placeholder');
-                    cells[i].classList.remove('copyable');
-                    cells[i].closest('tr').style.display = 'none';
-                }
-            }
-            break;
+/* ------------------------------------------------------------------ *
+ * Shared app context (busy state, toast, confirm dialog)
+ * ------------------------------------------------------------------ */
+const AppCtx = createContext(null);
+const useApp = () => useContext(AppCtx);
 
-        case 'apk_selected':
-            selectedApk = true;
-            document.getElementById('apk-filename').textContent = data;
-            document.getElementById('app-select').value = '';
-            updateInstallButton();
-            break;
+/* ------------------------------------------------------------------ *
+ * Reusable UI bits
+ * ------------------------------------------------------------------ */
+const Card = ({ title, children }) => html`
+    <div class="card">
+        ${title && html`<div class="card-title">${title}</div>`}
+        ${children}
+    </div>`;
 
-        case 'apps_loading':
-            document.getElementById('btn-refresh-apps').disabled = true;
-            break;
+const Icon = ({ path }) => html`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        ${path}
+    </svg>`;
 
-        case 'apps_loaded':
-            document.getElementById('btn-refresh-apps').disabled = false;
-            var select = document.getElementById('app-select');
-            select.innerHTML = '<option value="">-- Select an app --</option>';
-            if (data && data.length) {
-                for (var i = 0; i < data.length; i++) {
-                    var opt = document.createElement('option');
-                    opt.value = data[i].package;
-                    opt.textContent = data[i].name;
-                    select.appendChild(opt);
-                }
-            }
-            updateInstallButton();
-            break;
+const ModeSelect = ({ value, onChange, disabled }) => html`
+    <span class="field-label">in</span>
+    <select class="select-inline" value=${value} disabled=${disabled}
+            onChange=${(e) => onChange(e.target.value)}>
+        <option value="service">service</option>
+        <option value="updater">updater</option>
+    </select>
+    <span class="field-label">mode</span>`;
 
-        case 'task_start':
-            logContainer.classList.remove('has-error');
-            setButtonsDisabled(data, true);
-            break;
+/* ------------------------------------------------------------------ *
+ * Camera tab
+ * ------------------------------------------------------------------ */
+const INFO_FIELDS = ['Model', 'Product code', 'Serial number', 'Firmware version', 'Lens', 'GPS Data'];
+const INFO_OPTIONAL = ['Lens', 'GPS Data'];
 
-        case 'task_end':
-            setButtonsDisabled(data, false);
-            break;
+function CameraInfoCard() {
+    const { busy, showToast } = useApp();
+    const [info, setInfo] = useState(null);
 
-        case 'wifi_result':
-            if (data.error) {
-                document.getElementById('wifi-list').innerHTML =
-                    '<div style="font-size:13px;color:var(--color-danger);">' + escapeHtml(data.error) + '</div>';
-            } else {
-                renderWifiNetworks(data.networks);
-            }
-            break;
+    useBus('camera_info', (data) => {
+        const map = {};
+        (data || []).forEach((row) => { map[row.key] = row.value; });
+        setInfo(map);
+    });
 
-        case 'wifi_write_result':
-            if (data.error) {
-                showToast(data.error);
-            } else {
-                showToast('WiFi settings written successfully');
-            }
-            break;
+    const fields = info
+        ? INFO_FIELDS.filter((f) => info[f] !== undefined)
+        : INFO_FIELDS.filter((f) => !INFO_OPTIONAL.includes(f));
 
-        case 'tweaks_available':
-            showTweaksModal(data);
-            break;
+    const copy = (value) => copyText(value).then(() => showToast('Copied: ' + value));
 
-        case 'tweaks_applying':
-            setTweaksModalDisabled(true);
-            break;
+    return html`
+        <${Card}>
+            <button class="btn-primary btn-block" disabled=${busy.info} onClick=${api.getInfo}>
+                Get camera info
+            </button>
+            <table class="camera-info-table mt-12">
+                ${fields.map((field) => html`
+                    <tr key=${field}>
+                        <td>${field}</td>
+                        ${info
+                            ? html`<td class="camera-info-value copyable" onClick=${() => copy(info[field])}>${info[field]}</td>`
+                            : html`<td class="camera-info-value camera-info-placeholder">—</td>`}
+                    </tr>`)}
+            </table>
+        <//>`;
+}
 
-        case 'tweaks_done':
-            hideTweaksModal();
-            break;
+const KEY_TYPES = ['None', 'WEP', 'WPA/WPA2'];
 
-        case 'diagnostics_result':
-            renderDiagnostics(data);
-            break;
+function WifiCard() {
+    const { busy, showToast } = useApp();
+    const [multi, setMulti] = useState(false);
+    const [networks, setNetworks] = useState(null);
+    const [error, setError] = useState(null);
 
-        case 'backup_status':
-            var el = document.getElementById('backup-status');
-            el.style.display = 'block';
-            el.textContent = data.message || '';
-            if (data.done) {
-                setTimeout(function() { el.style.display = 'none'; }, 5000);
-            }
-            break;
+    useBus('wifi_result', (data) => {
+        if (data.error) { setError(data.error); setNetworks(null); }
+        else { setError(null); setNetworks((data.networks || []).map((n) => ({ ...n }))); }
+    });
+    useBus('wifi_write_result', (data) =>
+        showToast(data.error || 'WiFi settings written successfully'));
+
+    const update = (i, field, val) =>
+        setNetworks((ns) => ns.map((n, idx) => (idx === i ? { ...n, [field]: val } : n)));
+    const remove = (i) => setNetworks((ns) => ns.filter((_, idx) => idx !== i));
+    const add = () => setNetworks((ns) => [...(ns || []), { sid: '', key: '', keyType: 0 }]);
+
+    const write = () => {
+        const valid = networks.filter((n) => n.sid).map((n) => ({
+            sid: n.sid, key: n.key || '', keyType: Number(n.keyType),
+        }));
+        api.writeWifi(valid, multi);
+    };
+
+    return html`
+        <${Card} title="WiFi Settings">
+            <div class="input-row mb-12">
+                <label class="check-inline">
+                    <input type="checkbox" checked=${multi} onChange=${(e) => setMulti(e.target.checked)}/>
+                    Multi-WiFi
+                </label>
+                <button class="btn-primary push-right" disabled=${busy.wifi}
+                        onClick=${() => api.readWifi(multi)}>Read</button>
+            </div>
+
+            ${error && html`<div class="muted text-danger">${error}</div>`}
+            ${!error && networks === null && html`
+                <div class="muted">Press "Read" to load WiFi networks from camera</div>`}
+            ${!error && networks !== null && networks.length === 0 && html`
+                <div class="muted">No WiFi networks stored on camera</div>`}
+
+            ${networks && networks.map((net, i) => html`
+                <div class="wifi-entry" key=${i}>
+                    <div class="input-row">
+                        <label>SSID</label>
+                        <input type="text" value=${net.sid} placeholder="Network name"
+                               onInput=${(e) => update(i, 'sid', e.target.value)}/>
+                        <button class="icon-btn" title="Remove" onClick=${() => remove(i)}>
+                            <${Icon} path=${html`<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>`}/>
+                        </button>
+                    </div>
+                    <div class="input-row">
+                        <label>Key</label>
+                        <input type="text" value=${net.key} placeholder="Password"
+                               onInput=${(e) => update(i, 'key', e.target.value)}/>
+                    </div>
+                    <div class="input-row">
+                        <label>Type</label>
+                        <select class="select-inline" value=${net.keyType}
+                                onChange=${(e) => update(i, 'keyType', Number(e.target.value))}>
+                            ${KEY_TYPES.map((label, k) => html`<option key=${k} value=${k}>${label}</option>`)}
+                        </select>
+                    </div>
+                </div>`)}
+
+            ${networks !== null && html`
+                <div class="input-row mt-12">
+                    <button onClick=${add}>+ Add network</button>
+                    <button class="btn-primary push-right" disabled=${busy.wifi} onClick=${write}>
+                        Write to camera
+                    </button>
+                </div>`}
+        <//>`;
+}
+
+function BackupCard() {
+    const { busy, confirm } = useApp();
+    const [mode, setMode] = useState('service');
+    const [parsed, setParsed] = useState(false);
+    const [status, setStatus] = useState(null);
+
+    useBus('backup_status', (data) => {
+        setStatus(data.message || '');
+        if (data.done) setTimeout(() => setStatus(null), 5000);
+    });
+
+    const restore = () => confirm({
+        title: 'Restore Backup',
+        message: 'This will overwrite ALL camera settings. This action cannot be undone.',
+        confirmLabel: 'Restore',
+        onConfirm: () => api.restoreBackup(mode),
+    });
+
+    return html`
+        <${Card} title="Backup Settings">
+            <div class="warning mb-12">
+                Puts camera in <strong>updater</strong> or <strong>service</strong> mode.
+                Restoring a backup will <strong>overwrite all camera settings</strong>.
+            </div>
+            <div class="input-row">
+                <button class="btn-primary" disabled=${busy.backup}
+                        onClick=${() => api.downloadBackup(mode, parsed)}>Download backup</button>
+                <button class="btn-danger" disabled=${busy.backup} onClick=${restore}>Restore backup...</button>
+                <${ModeSelect} value=${mode} onChange=${setMode}/>
+            </div>
+            <label class="check-inline mt-8">
+                <input type="checkbox" checked=${parsed} onChange=${(e) => setParsed(e.target.checked)}/>
+                Get backup as parsed text
+            </label>
+            ${status !== null && html`<div class="muted mt-8">${status}</div>`}
+        <//>`;
+}
+
+function FirmwareCard() {
+    const { busy } = useApp();
+    return html`
+        <${Card} title="Firmware update">
+            <button class="btn-primary btn-block" disabled=${busy.firmware} onClick=${api.firmwareUpdate}>
+                Select firmware file and update...
+            </button>
+        <//>`;
+}
+
+const CameraTab = () => html`
+    <${CameraInfoCard}/>
+    <${WifiCard}/>
+    <${BackupCard}/>
+    <${FirmwareCard}/>`;
+
+/* ------------------------------------------------------------------ *
+ * Install tab
+ * ------------------------------------------------------------------ */
+function InstallTab({ config }) {
+    const { busy } = useApp();
+    const [apps, setApps] = useState([]);
+    const [selected, setSelected] = useState('');
+    const [apkName, setApkName] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
+
+    useBus('apps_loading', () => setRefreshing(true));
+    useBus('apps_loaded', (data) => { setApps(data || []); setRefreshing(false); });
+    useBus('apk_selected', (name) => { setApkName(name); setSelected(''); });
+
+    const pickApp = (pkg) => { setSelected(pkg); if (pkg) setApkName(null); };
+
+    let label = 'Select App to Install';
+    let action = null;
+    if (selected) {
+        const app = apps.find((a) => a.package === selected);
+        label = 'Install ' + (app ? app.name : selected);
+        action = () => api.installApp(selected);
+    } else if (apkName) {
+        label = 'Install ' + apkName.replace(/\.apk$/i, '');
+        action = api.installApk;
     }
+
+    const source = config.githubAppListUser
+        ? 'https://github.com/' + config.githubAppListUser + '/' + config.githubAppListRepo
+        : '#';
+
+    return html`
+        <${Card} title="Select an app from the list">
+            <div class="input-row">
+                <select value=${selected} onChange=${(e) => pickApp(e.target.value)}>
+                    <option value="">${refreshing ? 'Loading...' : '-- Select an app --'}</option>
+                    ${apps.map((a) => html`<option key=${a.package} value=${a.package}>${a.name}</option>`)}
+                </select>
+                <button disabled=${busy.install || refreshing} onClick=${api.loadApps}>Refresh</button>
+            </div>
+            <div class="mt-8"><a class="source-link" href=${source} target="_blank">Source</a></div>
+        <//>
+        <${Card} title="Or install from APK file">
+            <div class="input-row">
+                <span class="muted grow">${apkName || 'No file selected'}</span>
+                <button onClick=${api.selectApk}>Select APK...</button>
+            </div>
+        <//>
+        <${Card}>
+            <button class="btn-primary btn-block" disabled=${!action || busy.install}
+                    onClick=${() => action && action()}>${label}</button>
+        <//>`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Tweaks tab
+ * ------------------------------------------------------------------ */
+const TWEAK_PLACEHOLDERS = [
+    'Disable video recording limit',
+    'Disable 4K video recording limit',
+    'Unlock all languages',
+    'Enable PAL / NTSC selector & warning',
+    'PAL / NTSC',
+    'Enable USB app installer',
+];
+
+function TweaksTab() {
+    const { busy } = useApp();
+    const [mode, setMode] = useState('service');
+    const [tweaks, setTweaks] = useState(null);
+    const [applying, setApplying] = useState(false);
+
+    useBus('tweaks_available', (data) => { setTweaks(data); setApplying(false); });
+    useBus('tweaks_applying', () => setApplying(true));
+    useBus('tweaks_done', () => { setTweaks(null); setApplying(false); });
+
+    const active = tweaks !== null;
+    const start = () => (mode === 'updater' ? api.startTweaksUpdater() : api.startTweaksService());
+
+    return html`
+        <${Card}>
+            <div class="input-row">
+                <button class="btn-primary nowrap" disabled=${busy.tweaks || active} onClick=${start}>
+                    Start tweaking
+                </button>
+                <${ModeSelect} value=${mode} onChange=${setMode} disabled=${active}/>
+            </div>
+        <//>
+        <${Card} title="Tweaks">
+            ${!active
+                ? TWEAK_PLACEHOLDERS.map((desc, i) => html`
+                    <label class="tweak-item tweaks-placeholder" key=${i}>
+                        <input type="checkbox" disabled/>
+                        <div class="tweak-info">
+                            <div class="tweak-desc">${desc}</div>
+                            <div class="tweak-value">Connect camera to see status</div>
+                        </div>
+                    </label>`)
+                : tweaks.map((t) => html`
+                    <label class="tweak-item" key=${t.id}>
+                        <input type="checkbox" checked=${t.enabled} disabled=${applying}
+                               onChange=${(e) => api.setTweak(t.id, e.target.checked)}/>
+                        <div class="tweak-info">
+                            <div class="tweak-desc">${t.desc}</div>
+                            <div class="tweak-value">${t.value}</div>
+                        </div>
+                    </label>`)}
+            <div class="btn-group mt-12">
+                <button disabled=${!active || applying} onClick=${api.cancelTweaks}>Disconnect</button>
+                <button class="btn-primary" disabled=${!active || applying} onClick=${api.applyTweaks}>Apply</button>
+            </div>
+        <//>`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Log panel
+ * ------------------------------------------------------------------ */
+function Log() {
+    const { showToast } = useApp();
+    const [text, setText] = useState('');
+    const [expanded, setExpanded] = useState(true);
+    const [hasError, setHasError] = useState(false);
+    const bodyRef = useRef(null);
+
+    useBus('log', (chunk) => setText((prev) => prev + chunk));
+    useBus('error', () => setHasError(true));
+    useBus('task_start', () => setHasError(false));
+
+    useEffect(() => {
+        if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    }, [text]);
+
+    const toggle = () => {
+        setExpanded((e) => !e);
+        if (!expanded) setHasError(false);
+    };
+    const copy = () => copyText(text).then(() => showToast('Copied to clipboard'));
+    const clear = () => { setText(''); setHasError(false); };
+
+    const cls = 'log-container' + (expanded ? ' expanded' : '') + (hasError ? ' has-error' : '');
+    return html`
+        <div class=${cls}>
+            <div class="log-header">
+                <span class="log-toggle" onClick=${toggle}>
+                    <${Icon} path=${html`<polyline points="9 18 15 12 9 6"/>`}/>
+                    Log
+                    <span class="log-error-dot"></span>
+                </span>
+                <div class="log-actions">
+                    <button title="Copy log" onClick=${copy}>
+                        <${Icon} path=${html`<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>`}/>
+                    </button>
+                    <button title="Clear log" onClick=${clear}>
+                        <${Icon} path=${html`<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>`}/>
+                    </button>
+                </div>
+            </div>
+            <div id="log" ref=${bodyRef} onClick=${() => setHasError(false)}>${text}</div>
+        </div>`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Toast + confirm modal
+ * ------------------------------------------------------------------ */
+const Toast = ({ toast }) => html`
+    <div class="toast ${toast.visible ? 'visible' : ''}">${toast.msg}</div>`;
+
+const ConfirmModal = ({ opts, onClose }) => html`
+    <div class="modal-overlay">
+        <div class="modal-box">
+            <img src="icon.png" alt="" class="modal-icon"/>
+            <div class="modal-title">${opts.title}</div>
+            <div class="modal-message">${opts.message}</div>
+            <div class="btn-group modal-actions">
+                <button onClick=${() => onClose(false)}>Cancel</button>
+                <button class="btn-danger" onClick=${() => onClose(true)}>${opts.confirmLabel || 'OK'}</button>
+            </div>
+        </div>
+    </div>`;
+
+/* ------------------------------------------------------------------ *
+ * Header + tabs + root
+ * ------------------------------------------------------------------ */
+/* Representative light-outline icons (Feather/Lucide style, stroke-only). */
+const TAB_ICONS = {
+    info: html`<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>`,
+    install: html`<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>`,
+    tweaks: html`<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>`,
 };
 
-function setButtonsDisabled(taskType, disabled) {
-    var buttons;
-    switch (taskType) {
-        case 'info':
-            buttons = ['btn-info'];
-            break;
-        case 'install':
-            buttons = ['btn-install', 'btn-refresh-apps'];
-            break;
-        case 'tweaks':
-            buttons = ['btn-tweaks-start'];
-            break;
-        case 'wifi':
-            buttons = ['btn-wifi-read', 'btn-wifi-write'];
-            break;
-        case 'firmware':
-            buttons = ['btn-firmware'];
-            break;
-        case 'backup':
-            buttons = ['btn-backup-download', 'btn-backup-restore'];
-            break;
-        case 'system':
-            buttons = ['btn-diagnose'];
-            break;
-        default:
-            buttons = [];
-    }
-    for (var i = 0; i < buttons.length; i++) {
-        var el = document.getElementById(buttons[i]);
-        if (el) el.disabled = disabled;
-    }
-}
+const CORE_TABS = [
+    { id: 'info', label: 'Camera', component: CameraTab, icon: TAB_ICONS.info, order: 10 },
+    { id: 'install', label: 'Install App', component: InstallTab, icon: TAB_ICONS.install, order: 20 },
+    { id: 'tweaks', label: 'Tweaks', component: TweaksTab, icon: TAB_ICONS.tweaks, order: 30 },
+];
 
-var selectedApk = false;
+/** Optional plugins register tabs here after the backend reports them. */
+const pluginTabRegistry = [];
+let pluginTabListener = null;
 
-function updateInstallButton() {
-    var select = document.getElementById('app-select');
-    var btn = document.getElementById('btn-install');
-    var appSelected = select.value;
-    if (appSelected) {
-        selectedApk = false;
-        document.getElementById('apk-filename').textContent = 'No file selected';
-        btn.textContent = 'Install ' + select.options[select.selectedIndex].text;
-        btn.disabled = false;
-    } else if (selectedApk) {
-        var name = document.getElementById('apk-filename').textContent;
-        btn.textContent = 'Install ' + name.replace(/\.apk$/i, '');
-        btn.disabled = false;
-    } else {
-        btn.textContent = 'Select App to Install';
-        btn.disabled = true;
-    }
-}
+window.PMCA = {
+    html,
+    useState,
+    useEffect,
+    useRef,
+    useCallback,
+    useContext,
+    useApp,
+    useBus,
+    Card,
+    Icon,
+    api,
+    copyText,
+    registerTab(tab) {
+        if (!tab || !tab.id || !tab.component) return;
+        const entry = {
+            id: tab.id,
+            label: tab.label || tab.id,
+            component: tab.component,
+            icon: tab.icon || null,
+            order: tab.order != null ? tab.order : 40,
+        };
+        const idx = pluginTabRegistry.findIndex((t) => t.id === entry.id);
+        if (idx >= 0) pluginTabRegistry[idx] = entry;
+        else pluginTabRegistry.push(entry);
+        if (pluginTabListener) pluginTabListener(pluginTabRegistry.slice());
+    },
+};
 
-function installSelected() {
-    var select = document.getElementById('app-select');
-    var pkg = select.value;
-    if (pkg) {
-        api.installApp(pkg);
-    } else if (selectedApk) {
-        api.installApk();
-    }
-}
-
-var KEY_TYPES = ['None', 'WEP', 'WPA/WPA2'];
-
-function readWifi() {
-    var multi = document.getElementById('wifi-multi').checked;
-    api.readWifi(multi);
-}
-
-function writeWifi() {
-    var entries = document.querySelectorAll('.wifi-entry');
-    var networks = [];
-    for (var i = 0; i < entries.length; i++) {
-        var sid = entries[i].querySelector('.wifi-ssid').value;
-        var key = entries[i].querySelector('.wifi-key').value;
-        var keyType = parseInt(entries[i].querySelector('.wifi-keytype').value, 10);
-        if (sid) {
-            networks.push({sid: sid, key: key, keyType: keyType});
+function loadPluginScripts(plugins) {
+    (plugins || []).forEach((plugin) => {
+        if (!plugin || !plugin.js) return;
+        try {
+            // Trusted local plugin scripts shipped with the app / drop-in package.
+            // eslint-disable-next-line no-new-func
+            Function(plugin.js)();
+        } catch (err) {
+            console.error('Failed to load plugin', plugin.id, err);
         }
-    }
-    var multi = document.getElementById('wifi-multi').checked;
-    api.writeWifi(networks, multi);
-}
-
-function renderWifiNetworks(networks) {
-    var list = document.getElementById('wifi-list');
-    list.innerHTML = '';
-    if (!networks || networks.length === 0) {
-        list.innerHTML = '<div style="font-size:13px;color:var(--color-text-secondary);">No WiFi networks stored on camera</div>';
-    } else {
-        for (var i = 0; i < networks.length; i++) {
-            list.appendChild(createWifiEntry(networks[i]));
-        }
-    }
-    document.getElementById('wifi-actions').style.display = 'block';
-}
-
-function createWifiEntry(net) {
-    var div = document.createElement('div');
-    div.className = 'wifi-entry';
-    var keyTypeOptions = '';
-    for (var i = 0; i < KEY_TYPES.length; i++) {
-        keyTypeOptions += '<option value="' + i + '"' + (net && net.keyType === i ? ' selected' : '') + '>' + KEY_TYPES[i] + '</option>';
-    }
-    div.innerHTML =
-        '<div class="input-row">' +
-            '<label>SSID</label>' +
-            '<input type="text" class="wifi-ssid" value="' + escapeAttr(net ? net.sid : '') + '" placeholder="Network name">' +
-            '<button class="wifi-remove" onclick="this.closest(\'.wifi-entry\').remove()" title="Remove">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
-            '</button>' +
-        '</div>' +
-        '<div class="input-row">' +
-            '<label>Key</label>' +
-            '<input type="text" class="wifi-key" value="' + escapeAttr(net ? net.key : '') + '" placeholder="Password">' +
-        '</div>' +
-        '<div class="input-row">' +
-            '<label>Type</label>' +
-            '<select class="wifi-keytype">' + keyTypeOptions + '</select>' +
-        '</div>';
-    return div;
-}
-
-function addWifiNetwork() {
-    var list = document.getElementById('wifi-list');
-    var placeholder = list.querySelector('div[style]');
-    if (placeholder && !list.querySelector('.wifi-entry')) {
-        list.innerHTML = '';
-    }
-    list.appendChild(createWifiEntry(null));
-}
-
-function escapeAttr(str) {
-    if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function startTweaks() {
-    var mode = document.getElementById('tweaks-mode-select').value;
-    if (mode === 'updater') {
-        api.startTweaksUpdater();
-    } else {
-        api.startTweaksService();
-    }
-}
-
-var tweaksPlaceholderHtml = null;
-
-function showTweaksModal(tweaks) {
-    var list = document.getElementById('tweaks-list');
-    if (!tweaksPlaceholderHtml) tweaksPlaceholderHtml = list.innerHTML;
-    list.innerHTML = '';
-    for (var i = 0; i < tweaks.length; i++) {
-        var t = tweaks[i];
-        var item = document.createElement('label');
-        item.className = 'tweak-item';
-        item.innerHTML =
-            '<input type="checkbox"' + (t.enabled ? ' checked' : '') + ' data-id="' + t.id + '">' +
-            '<div class="tweak-info"><div class="tweak-desc">' + escapeHtml(t.desc) + '</div>' +
-            '<div class="tweak-value">' + escapeHtml(t.value) + '</div></div>';
-        item.querySelector('input').addEventListener('change', (function(id) {
-            return function(e) { api.setTweak(id, e.target.checked); };
-        })(t.id));
-        list.appendChild(item);
-    }
-    document.getElementById('btn-apply-tweaks').disabled = false;
-    document.getElementById('btn-cancel-tweaks').disabled = false;
-}
-
-function hideTweaksModal() {
-    document.getElementById('btn-apply-tweaks').disabled = true;
-    document.getElementById('btn-cancel-tweaks').disabled = true;
-    if (tweaksPlaceholderHtml) {
-        document.getElementById('tweaks-list').innerHTML = tweaksPlaceholderHtml;
-    }
-}
-
-function setTweaksModalDisabled(disabled) {
-    var panel = document.getElementById('tweaks-inline-panel');
-    var inputs = panel.querySelectorAll('input, button');
-    for (var i = 0; i < inputs.length; i++) {
-        inputs[i].disabled = disabled;
-    }
-}
-
-function escapeHtml(str) {
-    var div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
-
-function downloadBackup() {
-    var mode = document.getElementById('backup-mode-select').value;
-    var parsedtextproperties = document.getElementById('backup-parsedtextproperties').checked;
-    api.downloadBackup(mode, parsedtextproperties);
-}
-
-function restoreBackup() {
-    showConfirmModal('Restore Backup', 'This will overwrite ALL camera settings. This action cannot be undone.', function() {
-        var mode = document.getElementById('backup-mode-select').value;
-        api.restoreBackup(mode);
     });
 }
 
-var _confirmModalCallback = null;
+function App() {
+    const [config, setConfig] = useState({ version: '', docsUrl: '', githubAppListUser: '', githubAppListRepo: '' });
+    const [tabs, setTabs] = useState(CORE_TABS);
+    const [tab, setTab] = useState('info');
+    const [busy, setBusy] = useState({});
+    const [toast, setToast] = useState({ msg: '', visible: false });
+    const [confirmOpts, setConfirmOpts] = useState(null);
+    const toastTimer = useRef(null);
 
-function showConfirmModal(title, message, onConfirm) {
-    document.getElementById('confirm-modal-title').textContent = title;
-    document.getElementById('confirm-modal-message').textContent = message;
-    document.getElementById('confirm-modal').style.display = 'flex';
-    _confirmModalCallback = onConfirm;
+    useBus('task_start', (type) => setBusy((b) => ({ ...b, [type]: true })));
+    useBus('task_end', (type) => setBusy((b) => ({ ...b, [type]: false })));
+
+    const showToast = useCallback((msg) => {
+        setToast({ msg, visible: true });
+        clearTimeout(toastTimer.current);
+        toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
+    }, []);
+
+    const confirm = useCallback((opts) => setConfirmOpts(opts), []);
+
+    const closeConfirm = (ok) => {
+        if (ok && confirmOpts) confirmOpts.onConfirm();
+        setConfirmOpts(null);
+    };
+
+    useEffect(() => {
+        const mergeTabs = (plugins) => {
+            const merged = CORE_TABS.concat(plugins || []).slice().sort((a, b) => a.order - b.order);
+            setTabs(merged);
+        };
+        pluginTabListener = mergeTabs;
+        mergeTabs(pluginTabRegistry);
+        return () => { pluginTabListener = null; };
+    }, []);
+
+    useEffect(() => onReady(() => {
+        api.getConfig().then((cfg) => {
+            if (cfg) {
+                setConfig(cfg);
+                loadPluginScripts(cfg.plugins);
+            }
+        }).catch(() => {});
+        api.loadApps();
+    }), []);
+
+    const title = 'PMCA Camera Utility' + (config.version ? ' ' + config.version : '');
+    const docsUrl = config.docsUrl ? config.docsUrl + '/devices.html' : '#';
+
+    return html`
+        <${AppCtx.Provider} value=${{ busy, showToast, confirm }}>
+            <div class="header">
+                <h1>${title}</h1>
+                <a href=${docsUrl} target="_blank">Camera compatibility</a>
+            </div>
+
+            <div class="main-content">
+                <div class="tabs" role="tablist">
+                    ${tabs.map(({ id, label, icon }) => html`
+                        <button class="tab ${tab === id ? 'active' : ''}" key=${id}
+                                type="button" role="tab" aria-selected=${tab === id}
+                                onClick=${() => setTab(id)}>
+                            <span class="tab-icon"><${Icon} path=${icon}/></span>
+                            <span class="tab-label">${label}</span>
+                        </button>`)}
+                </div>
+                <div class="tab-panels">
+                    ${tabs.map(({ id, component: Comp }) => html`
+                        <div class="tab-panel ${tab === id ? 'active' : ''}" key=${id}>
+                            <${Comp} config=${config}/>
+                        </div>`)}
+                </div>
+            </div>
+
+            <${Log}/>
+            <${Toast} toast=${toast}/>
+            ${confirmOpts && html`<${ConfirmModal} opts=${confirmOpts} onClose=${closeConfirm}/>`}
+        <//>`;
 }
 
-function closeConfirmModal(confirmed) {
-    document.getElementById('confirm-modal').style.display = 'none';
-    if (confirmed && _confirmModalCallback) {
-        _confirmModalCallback();
-    }
-    _confirmModalCallback = null;
-}
-
-function renderDiagnostics(checks) {
-    var container = document.getElementById('diagnostics-results');
-    var list = document.getElementById('diagnostics-list');
-    container.style.display = 'block';
-    list.innerHTML = '';
-    if (!checks || !checks.length) {
-        list.innerHTML = '<div style="font-size:13px;color:var(--color-text-secondary);">No diagnostics to report.</div>';
-        return;
-    }
-    for (var i = 0; i < checks.length; i++) {
-        var c = checks[i];
-        var statusClass = c.status === 'pass' ? 'diag-pass' : (c.status === 'warn' ? 'diag-warn' : 'diag-fail');
-        var icon = c.status === 'pass' ? '✓' : (c.status === 'warn' ? '⚠' : '✗');
-        var div = document.createElement('div');
-        div.className = 'diag-item ' + statusClass;
-        var html = '<div class="diag-header"><span class="diag-icon">' + icon + '</span><span class="diag-label">' + escapeHtml(c.label) + '</span></div>';
-        if (c.detail) {
-            html += '<div class="diag-detail">' + escapeHtml(c.detail) + '</div>';
-        }
-        if (c.solution && c.status !== 'pass') {
-            html += '<div class="diag-solution">' + escapeHtml(c.solution) + '</div>';
-        }
-        div.innerHTML = html;
-        list.appendChild(div);
-    }
-}
-
-// Tab switching
-document.getElementById('tabs').addEventListener('click', function(e) {
-    var tab = e.target.closest('.tab');
-    if (!tab) return;
-    var tabId = tab.dataset.tab;
-
-    var allTabs = document.querySelectorAll('.tab');
-    var allPanels = document.querySelectorAll('.tab-panel');
-    for (var i = 0; i < allTabs.length; i++) allTabs[i].classList.remove('active');
-    for (var i = 0; i < allPanels.length; i++) allPanels[i].classList.remove('active');
-
-    tab.classList.add('active');
-    document.getElementById('panel-' + tabId).classList.add('active');
-});
-
-// Copy camera info value on click
-document.getElementById('camera-info-display').addEventListener('click', function(e) {
-    var cell = e.target.closest('.camera-info-value.copyable');
-    if (!cell) return;
-    var text = cell.textContent;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() { showToast('Copied: ' + text); }).catch(function() { copyFallback(text); showToast('Copied: ' + text); });
-    } else {
-        copyFallback(text);
-        showToast('Copied: ' + text);
-    }
-});
-
-// Hide optional rows initially
-(function() {
-    var optionalFields = ['Lens', 'GPS Data'];
-    var cells = document.querySelectorAll('#camera-info-display .camera-info-value');
-    for (var i = 0; i < cells.length; i++) {
-        var field = cells[i].getAttribute('data-field');
-        if (optionalFields.indexOf(field) !== -1) {
-            cells[i].closest('tr').style.display = 'none';
-        }
-    }
-})();
-
-// Init
-window.addEventListener('pywebviewready', function() {
-    pywebview.api.get_config().then(function(cfg) {
-        if (cfg.version) {
-            document.getElementById('app-title').textContent += ' ' + cfg.version;
-        }
-        document.getElementById('docs-link').href = cfg.docsUrl + '/devices.html';
-        document.getElementById('app-source-link').href =
-            'https://github.com/' + cfg.githubAppListUser + '/' + cfg.githubAppListRepo;
-    });
-    pywebview.api.load_apps();
-});
+render(html`<${App}/>`, document.getElementById('app'));

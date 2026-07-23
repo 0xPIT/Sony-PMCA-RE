@@ -5,6 +5,7 @@ import argparse
 from pmca.commands.backup import *
 from pmca.commands.market import *
 from pmca.commands.usb import *
+from pmca.plugins import register_cli_commands
 from pmca import spk
 
 if getattr(sys, 'frozen', False):
@@ -63,6 +64,8 @@ def main():
  printBackup = subparsers.add_parser('print_backup', description='Print the contents of a Backup.bin file')
  printBackup.add_argument('backupFile', metavar='Backup.bin', type=argparse.FileType('rb'), help='backup file')
 
+ pluginHandlers = register_cli_commands(subparsers, drivers)
+
  args = parser.parse_args()
  if args.command == 'info':
   infoCommand(args.driver)
@@ -96,6 +99,8 @@ def main():
   wifiCommand(args.write, args.file, args.multi, args.driver)
  elif args.command == 'print_backup':
   printBackupCommand(args.backupFile)
+ elif args.command in pluginHandlers:
+  pluginHandlers[args.command](args)
  else:
   parser.print_usage()
 

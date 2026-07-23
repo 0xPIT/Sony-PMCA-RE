@@ -971,7 +971,15 @@ class SonySenserCamera(object):
  SONY_ADJUST_BACKUP_PDT_WRITE = (0x603, 4)
  SONY_ADJUST_BACKUP_PDT_READ = (0x603, 5)
  SONY_ADJUST_BACKUP_PDT_STAT = (0x603, 6)
+ SONY_ADJUST_BACKUP_PROTECT = (0x603, 8)
  SONY_ADJUST_BACKUP_ID1 = (0x603, 15)
+ SONY_ADJUST_BACKUP_UNLOCK = (0x603, 0x400f)
+ SONY_ADJUST_BACKUP_WRITE_EX = (0x603, 0x21)
+ SONY_ADJUST_FLAG_SET = (0x703, 0)
+ SONY_ADJUST_FLAG_WRITE = (0x703, 1)
+ SONY_ADJUST_REGISTER_READ = (0xd21, 0xfe)
+ SONY_ADJUST_REGISTER_WRITE = (0xd21, 0xff)
+ SONY_ADJUST_FINALIZE = (0xd01, 0x50)
 
  SONY_FILE_CONTROL_WRITE = 1
  SONY_FILE_CONTROL_READ = 2
@@ -1055,3 +1063,9 @@ class SonySenserCamera(object):
 
  def setBackupId1(self, value):
   return parse8(self._sendAdjustControlPacket(*self.SONY_ADJUST_BACKUP_ID1, dump8(1 if value else 0)))
+
+ def readRegister(self, address, size):
+  return self._sendAdjustControlPacket(*self.SONY_ADJUST_REGISTER_READ, dump32le(address) + dump32le(size))
+
+ def writeRegister(self, address, data):
+  self._sendAdjustControlPacket(*self.SONY_ADJUST_REGISTER_WRITE, dump32le(address) + dump32le(len(data)) + data)

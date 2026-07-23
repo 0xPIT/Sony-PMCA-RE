@@ -8,6 +8,7 @@ import struct
 import zipfile
 
 import config
+from ..resources import get_bundle_resource_path
 from ..apk import *
 from .. import appstore
 from .. import firmware
@@ -23,7 +24,7 @@ from ..usb.driver.generic import *
 from ..usb.sony import *
 from ..util import http
 
-scriptRoot = getattr(sys, '_MEIPASS', os.path.dirname(__file__) + '/../..')
+scriptRoot = get_bundle_resource_path('')
 
 
 def printStatus(status):
@@ -659,12 +660,20 @@ def senserShellCommand(driverName=None, complete=None):
   driverName = 'libusb'
  with importDriver(driverName) as driver:
   device = getDevice(driver)
+  modelName = None
   if device and isinstance(device, SonyMscExtCmdDevice):
    if not isinstance(device.driver, GenericUsbDriver):
     print('Error: Only libusb drivers are supported for switching to service mode.')
     if sys.platform == 'win32':
-     print('Please use Zadig to install the libusb-win32 driver for the mass storage device.')
+     print('Use Zadig 2.8 to bind the "libusb-win32" driver to the mass storage device (verify '
+      'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
+      'via Device Manager afterwards.')
     return
+
+   try:
+    modelName = SonyExtCmdCamera(device).getCameraInfo().modelName
+   except Exception:
+    pass
 
    print('Switching to service mode')
    dev = SonySenserAuthDevice(device.driver)
@@ -690,7 +699,9 @@ def senserShellCommand(driverName=None, complete=None):
    if not isinstance(device.driver, GenericUsbDriver):
     print('Error: Only libusb drivers are supported for service mode.')
     if sys.platform == 'win32':
-     print('Please use Zadig to install the libusb-win32 driver for the service mode device.')
+     print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device (verify '
+      'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
+      'via Device Manager afterwards.')
     return
 
    print('Authenticating')
@@ -699,7 +710,7 @@ def senserShellCommand(driverName=None, complete=None):
    dev.authenticate()
    try:
     if complete:
-     complete(SonySenserCamera(device))
+     complete(SonySenserCamera(device), modelName)
     else:
      print('Starting service shell...')
      print('')
