@@ -6,6 +6,7 @@ import sys
 import threading
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import webview
 
@@ -18,11 +19,13 @@ from pmca.commands.usb import (
     updaterShellCommand, senserShellCommand, importDriver, getDevice
 )
 from pmca.usb.sony import SonyExtCmdDevice, SonyExtCmdCamera
+from pmca.usb import InvalidCommandException
 from pmca.platform.backend.senser import SenserPlatformBackend
 from pmca.platform.backend.usb import UsbPlatformBackend
 from pmca.platform.tweaks import TweakInterface
-from pmca.diagnostics import run_all_checks
 from pmca.backup import BackupFile
+from pmca.resources import get_bundle_resource_path
+from pmca.plugins import call_web, get_web_plugins
 
 if getattr(sys, 'frozen', False):
     from frozenversion import version
@@ -94,25 +97,53 @@ class Api:
 
     def __init__(self):
         self._window = None
+        self._ui_lock = threading.RLock()
+        self._closing = False
+        self._ui_ready = False
         self._apps = []
         self._tweaks_data = None
         self._tweak_interface = None
 
     def set_window(self, window):
-        self._window = window
+        with self._ui_lock:
+            self._window = window
+
+    def mark_ready(self):
+        """Called on the WebView 'loaded' event; JS is now safe to evaluate."""
+        with self._ui_lock:
+            self._ui_ready = True
+
+    def shutdown(self):
+        """Called on window close; stop touching a destroyed WebView."""
+        with self._ui_lock:
+            self._closing = True
+            self._ui_ready = False
+            self._window = None
+        # Release a tweak session that may be blocked waiting for apply/cancel.
+        event = getattr(self, '_tweak_apply_event', None)
+        if event:
+            event.set()
+
+    def _evaluate_js(self, script):
+        """Serialize JS evaluation and drop calls outside the WebView lifetime."""
+        with self._ui_lock:
+            window = self._window
+            if self._closing or not self._ui_ready or window is None:
+                return False
+            try:
+                window.evaluate_js(script)
+                return True
+            except Exception:
+                return False
 
     def push_log(self, text):
-        if self._window:
-            safe = text.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
-            self._window.evaluate_js(f"window._appendLog('{safe}')")
+        self._evaluate_js('window._appendLog(%s)' % json.dumps(text))
 
     def signal_error(self):
-        if self._window:
-            self._window.evaluate_js("window._signalError()")
+        self._evaluate_js('window._signalError()')
 
     def _notify(self, event, data='null'):
-        if self._window:
-            self._window.evaluate_js(f"window._onEvent('{event}', {data})")
+        self._evaluate_js('window._onEvent(%s, %s)' % (json.dumps(event), data))
 
     def get_config(self):
         return {
@@ -120,7 +151,12 @@ class Api:
             'docsUrl': config.docsUrl,
             'githubAppListUser': config.githubAppListUser,
             'githubAppListRepo': config.githubAppListRepo,
+            'plugins': get_web_plugins(),
         }
+
+    def plugin_call(self, plugin_id, method, *args):
+        """Dispatch a call to an optional plugin's web handler."""
+        return call_web(self, plugin_id, method, args)
 
     def load_apps(self):
         def task():
@@ -225,7 +261,7 @@ class Api:
             try:
                 self._notify('task_start', '"tweaks"')
 
-                def complete(dev):
+                def complete(dev, modelName=None):
                     backend = SenserPlatformBackend(dev)
                     self._run_tweaks(backend)
 
@@ -297,10 +333,15 @@ class Api:
                             self._notify('wifi_result', json.dumps({'error': 'Cannot use camera in this mode'}))
                             return
                         dev = SonyExtCmdCamera(device)
-                        if multi:
-                            settings = dev.getMultiWifiAPInfo()
-                        else:
-                            settings = dev.getWifiAPInfo()
+                        try:
+                            if multi:
+                                settings = list(dev.getMultiWifiAPInfo())
+                            else:
+                                settings = list(dev.getWifiAPInfo())
+                        except InvalidCommandException:
+                            self._notify('wifi_result', json.dumps({
+                                'error': 'Camera does not support %sWiFi settings' % ('multi-' if multi else '')}))
+                            return
                         aps = []
                         for ap in settings:
                             ap_dict = ap._asdict()
@@ -355,6 +396,7 @@ class Api:
             finally:
                 self._notify('task_end', '"wifi"')
         threading.Thread(target=task, daemon=True).start()
+
 
     def _get_camera_model_serial(self):
         """Get camera model and serial via info command (MTP/MSC mode)."""
@@ -413,7 +455,7 @@ class Api:
                         backend.stop()
                     updaterShellCommand(complete=complete)
                 else:
-                    def complete(cam):
+                    def complete(cam, modelName=None):
                         backend = SenserPlatformBackend(cam)
                         self._notify('backup_status', json.dumps({'message': 'Downloading backup data...'}))
                         backup_data[0] = backend.getBackupData()
@@ -503,7 +545,7 @@ class Api:
                         backend.stop()
                     updaterShellCommand(complete=complete)
                 else:
-                    def complete(cam):
+                    def complete(cam, modelName=None):
                         backend = SenserPlatformBackend(cam)
                         self._notify('backup_status', json.dumps({'message': 'Writing backup data...'}))
                         backend.setBackupData(data)
@@ -526,30 +568,42 @@ class Api:
                 self._notify('task_end', '"backup"')
         threading.Thread(target=task, daemon=True).start()
 
-    def run_diagnostics(self):
-        def task():
-            try:
-                self._notify('task_start', '"system"')
-                print('Running system diagnostics...')
-                results = run_all_checks()
-                data = [{'status': r.status, 'label': r.label, 'detail': r.detail, 'solution': r.solution} for r in results]
-                passed = sum(1 for r in results if r.status == 'pass')
-                warned = sum(1 for r in results if r.status == 'warn')
-                failed = sum(1 for r in results if r.status == 'fail')
-                print('Diagnostics complete: %d passed, %d warnings, %d failures' % (passed, warned, failed))
-                self._notify('diagnostics_result', json.dumps(data))
-            except Exception:
-                traceback.print_exc()
-            finally:
-                self._notify('task_end', '"system"')
-        threading.Thread(target=task, daemon=True).start()
+
+_REQUIRED_WEB_ASSETS = (
+    'assets/index.html',
+    'assets/app.js',
+    'assets/style.css',
+    'assets/icon.png',
+)
 
 
-if getattr(sys, 'frozen', False):
-    _BASE_DIR = sys._MEIPASS
-else:
-    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ASSETS_DIR = os.path.join(_BASE_DIR, 'assets')
+def get_startup_page():
+    """Return a valid file:// URL, or a self-contained resource error page.
+
+    Path(...).as_uri() produces a correct file:///C:/... URI on Windows;
+    the previous 'file://' + os.path.join(...) produced an invalid URI there.
+    """
+    missing = [path for path in _REQUIRED_WEB_ASSETS
+               if not os.path.isfile(get_bundle_resource_path(path))]
+    if not missing:
+        return {'url': Path(get_bundle_resource_path('assets/index.html')).as_uri()}
+
+    items = ''.join('<li><code>%s</code></li>' % path for path in missing)
+    return {'html': '''<!doctype html><html><head><meta charset="utf-8">
+<title>PMCA resource error</title></head><body style="font-family:sans-serif;padding:2rem">
+<h1>PMCA could not start</h1><p>Required application resources are missing:</p>
+<ul>%s</ul><p>Reinstall or rebuild the application with the complete assets directory.</p>
+</body></html>''' % items}
+
+
+def get_webview_start_options():
+    """Runtime icon options. pywebview's GTK/Qt backends accept a PNG icon,
+    but the Windows backend treats it as a WinForms .ico and crashes; frozen
+    Windows executables set their icon at packaging time instead."""
+    icon_path = get_bundle_resource_path('icon.png')
+    if sys.platform != 'win32' and os.path.isfile(icon_path):
+        return {'icon': icon_path}
+    return {}
 
 
 def main():
@@ -558,18 +612,18 @@ def main():
     capture.start()
 
     title = 'PMCA Camera Utility' + (' ' + version if version else '')
-    icon_path = os.path.join(_BASE_DIR, 'icon.png')
-    url = 'file://' + os.path.join(ASSETS_DIR, 'index.html')
     window = webview.create_window(
         title,
-        url=url,
         js_api=api,
         width=560,
         height=672,
         min_size=(400, 400),
+        **get_startup_page(),
     )
     api.set_window(window)
-    webview.start(icon=icon_path)
+    window.events.loaded += api.mark_ready
+    window.events.closed += api.shutdown
+    webview.start(**get_webview_start_options())
 
 
 if __name__ == '__main__':

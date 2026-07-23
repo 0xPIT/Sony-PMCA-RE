@@ -7,6 +7,7 @@ from .backup import *
 from .properties import *
 from .tweaks import *
 from ..io import *
+from ..plugins import register_shell_commands
 from ..shell import *
 from ..shell.interactive import *
 from ..shell.parser import *
@@ -46,6 +47,8 @@ class CameraShell(Shell):
    bk.addCommand('lock', Command(self.lockBackup, (), 'Lock protected backup settings'))
    bk.addCommand('unlock', Command(self.unlockBackup, (), 'Unlock protected backup settings'))
    self.addCommand('bk', bk)
+
+  register_shell_commands(self, backend)
 
  def run(self):
   self.backend.start()

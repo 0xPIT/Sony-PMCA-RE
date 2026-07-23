@@ -1055,3 +1055,4 @@ class SonySenserCamera(object):
 
  def setBackupId1(self, value):
   return parse8(self._sendAdjustControlPacket(*self.SONY_ADJUST_BACKUP_ID1, dump8(1 if value else 0)))
+

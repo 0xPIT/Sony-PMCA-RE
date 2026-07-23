@@ -14,6 +14,9 @@ This tool interfaces with Sony digital cameras through USB. It allows to tweak s
 - Add Tweak: Switch PAL/NTSC (solution found in issues – **not tested**)
 - Copy/paste of camera details (after clicking "Get camera info")
 - Copy/Paste & clear of the log output and error indicator dot
+- Cross-platform fixes: Windows web-GUI startup and PyInstaller build fixes, plus
+  clearer diagnostics that distinguish the native MTP/Mass Storage path from the
+  libusb service-mode binding (Windows camera comms remain unverified on hardware)
 
 
 
@@ -40,7 +43,28 @@ There are two binaries:
 
 ### Windows
 
-The application should work fine on Windows using the operating system's mass storage and MTP USB drivers.
+> [!CAUTION]
+> The Windows build of this fork has **not been verified on camera hardware**. The
+> startup/build fixes below are known-good, but camera communication on Windows is
+> currently untested here. Feedback is welcome.
+
+**Normal operations (MTP / Mass Storage):** work out of the box using the operating
+system's built-in MTP and mass storage USB drivers. No extra drivers are required to
+get camera info, apply tweaks, back up/restore, or install apps.
+
+**Service mode (advanced):** the camera's service-mode USB device is not handled by a
+Windows driver, so it must be bound to a libusb driver first:
+
+1. Start the operation so the camera enters service mode and the new USB device appears.
+2. Open [Zadig 2.8](https://zadig.akeo.ie), find that **service-mode** device (Sony
+   `VID 054C`), and confirm the PID/interface.
+3. Install the **`libusb-win32` (1.2.7.3)** driver for that device only.
+4. Do **not** replace the normal MTP/Mass Storage driver.
+5. When you are done, roll the driver back via **Device Manager** so normal operations
+   keep working.
+
+The built-in **System Diagnostics** tool reports whether a libusb runtime and binding
+are present and walks you through the same recipe.
 
 Download the [latest stable release](https://github.com/ma1co/Sony-PMCA-RE/releases/latest) or the newest [development build](https://ci.appveyor.com/project/ma1co/sony-pmca-re/build/artifacts).
 
