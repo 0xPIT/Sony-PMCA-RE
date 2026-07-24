@@ -112,23 +112,91 @@ def checkApk(apkFile):
 
 
 class UsbDriverList(contextlib.AbstractContextManager):
- def __init__(self, *contexts):
-  self._contexts = contexts
+ def __init__(self, *contexts, fallbackFactories=()):
+  self._contexts = tuple(contexts)
+  self._fallbackFactories = tuple(fallbackFactories)
   self._drivers = []
+  self._fallbackDrivers = []
+  self._fallbackDriverMap = {}
+  self._exitStack = None
 
  def __enter__(self):
-  self._drivers = [context.__enter__() for context in self._contexts]
+  self._exitStack = contextlib.ExitStack()
+  try:
+   for context in self._contexts:
+    driver = self._exitStack.enter_context(context)
+    self._drivers.append(driver)
+  except BaseException:
+   self._exitStack.__exit__(*sys.exc_info())
+   self._reset()
+   raise
   return self
 
  def __exit__(self, *ex):
-  for context in self._contexts:
-   context.__exit__(*ex)
+  try:
+   return self._exitStack.__exit__(*ex)
+  finally:
+   self._reset()
+
+ def _reset(self):
   self._drivers = []
+  self._fallbackDrivers = []
+  self._fallbackDriverMap = {}
+  self._exitStack = None
+
+ def _getFallbackDrivers(self, classType):
+  drivers = []
+  for fallbackClass, name, factory in self._fallbackFactories:
+   if fallbackClass != classType:
+    continue
+   key = id(factory)
+   if key not in self._fallbackDriverMap:
+    context = factory()
+    driver = self._exitStack.enter_context(context)
+    self._fallbackDriverMap[key] = driver
+    self._fallbackDrivers.append(driver)
+   drivers.append(self._fallbackDriverMap[key])
+  return drivers
+
+ @staticmethod
+ def _listCandidates(drivers, vendor):
+  for driver in drivers:
+   for device in driver.listDevices(vendor):
+    yield device, driver.classType, driver.openDevice(device)
 
  def listDevices(self, vendor):
-  for driver in self._drivers:
-   for dev in driver.listDevices(vendor):
-    yield dev, driver.classType, driver.openDevice(dev)
+  return self._listCandidates(self._drivers, vendor)
+
+ def listRecognizedDevices(self, vendor, recognize):
+  if not self._fallbackFactories:
+   yield from recognize(self.listDevices(vendor))
+   return
+
+  classTypes = []
+  for context in self._contexts:
+   if context.classType not in classTypes:
+    classTypes.append(context.classType)
+  for classType, name, factory in self._fallbackFactories:
+   if classType not in classTypes:
+    classTypes.append(classType)
+
+  for classType in classTypes:
+   nativeDrivers = [
+    driver for driver in self._drivers if driver.classType == classType
+   ]
+   fallbackAvailable = any(
+    fallbackClass == classType
+    for fallbackClass, name, factory in self._fallbackFactories
+   )
+   recognized = list(recognize(
+    self._listCandidates(nativeDrivers, vendor)
+   ))
+   if recognized:
+    yield from recognized
+   elif fallbackAvailable:
+    yield from recognize(
+     self._listCandidates(self._getFallbackDrivers(classType), vendor)
+    )
 
 
 def importDriver(driverName=None):
@@ -143,9 +211,18 @@ def importDriver(driverName=None):
  # Load native drivers
  if driverName == 'native' or driverName is None:
   if sys.platform == 'win32':
-   from ..usb.driver.windows.msc import MscContext
-   from ..usb.driver.windows.wpd import MtpContext
-   from ..usb.driver.windows.driverless import VendorSpecificContext
+   try:
+    from ..usb.driver.windows.msc import MscContext
+   except (ImportError, OSError):
+    if driverName == 'native':
+     raise
+   try:
+    from ..usb.driver.windows.wpd import MtpContext
+   except (ImportError, OSError):
+    if driverName == 'native':
+     raise
+   if driverName == 'native':
+    from ..usb.driver.windows.driverless import VendorSpecificContext
   elif sys.platform == 'darwin':
    from ..usb.driver.osx import isMscDriverAvailable
    if isMscDriverAvailable():
@@ -168,16 +245,39 @@ def importDriver(driverName=None):
  if (VendorSpecificContext is None and driverName != 'qemu') or (driverName is None and sys.platform == 'win32'):
   from ..usb.driver.generic.libusb import VendorSpecificContext as VendorSpecificContext2
 
- drivers = [context() for context in [MscContext, MtpContext, VendorSpecificContext, MscContext2, MtpContext2, VendorSpecificContext2] if context]
- print('Using drivers %s' % ', '.join(d.name for d in drivers))
- return UsbDriverList(*drivers)
+ nativeContextTypes = [
+  context for context in [MscContext, MtpContext, VendorSpecificContext]
+  if context
+ ]
+ optionalNative = driverName is None and sys.platform == 'win32'
+ drivers = [context() for context in nativeContextTypes]
+ if optionalNative:
+  fallbackFactories = [
+   (classType, name, context)
+   for classType, name, context in [
+    (USB_CLASS_MSC, 'libusb-MSC', MscContext2),
+    (USB_CLASS_PTP, 'libusb-MTP', MtpContext2),
+    (USB_CLASS_VENDOR_SPECIFIC, 'libusb-vendor-specific', VendorSpecificContext2),
+   ]
+   if context
+  ]
+  print('Using drivers %s' % ', '.join(
+   [driver.name for driver in drivers] +
+   [name for classType, name, factory in fallbackFactories]
+  ))
+  return UsbDriverList(*drivers, fallbackFactories=fallbackFactories)
+ fallbackContextTypes = [
+  context for context in [MscContext2, MtpContext2, VendorSpecificContext2]
+  if context
+ ]
+ fallbackDrivers = [context() for context in fallbackContextTypes]
+ allDrivers = drivers + fallbackDrivers
+ print('Using drivers %s' % ', '.join(d.name for d in allDrivers))
+ return UsbDriverList(*allDrivers)
 
 
-def listDevices(driverList, quiet=False):
- """List all Sony usb devices"""
- if not quiet:
-  print('Looking for Sony devices')
- for dev, type, drv in driverList.listDevices(SONY_ID_VENDOR):
+def _recognizeDevices(candidates, quiet=False):
+ for dev, type, drv in candidates:
   if type == USB_CLASS_MSC:
    if not quiet:
     print('\nQuerying mass storage device')
@@ -216,6 +316,16 @@ def listDevices(driverList, quiet=False):
 
   if not quiet:
    print('')
+
+
+def listDevices(driverList, quiet=False):
+ """List all Sony usb devices"""
+ if not quiet:
+  print('Looking for Sony devices')
+ yield from driverList.listRecognizedDevices(
+  SONY_ID_VENDOR,
+  lambda candidates: _recognizeDevices(candidates, quiet),
+ )
 
 
 def getDevice(driver):
