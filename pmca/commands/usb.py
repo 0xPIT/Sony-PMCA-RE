@@ -24,8 +24,6 @@ from ..usb.driver.generic import *
 from ..usb.sony import *
 from ..util import http
 
-scriptRoot = get_bundle_resource_path('')
-
 
 def printStatus(status):
  """Print progress"""
@@ -47,7 +45,7 @@ def listApps(enableCache=False):
 
 def installApp(dev, apkFile=None, appPackage=None, outFile=None):
  """Installs an app on the specified device."""
- certFile = scriptRoot + '/certs/localtest.me.pem'
+ certFile = get_bundle_resource_path('certs/localtest.me.pem')
  with ServerContext(LocalMarketServer(certFile)) as server:
   apkData = None
   if apkFile:
@@ -445,13 +443,14 @@ def appSelectionCommand():
 
 
 def getFdats():
- fdatDir = scriptRoot + '/updatershell/fdat/'
- for dir in os.listdir(fdatDir):
-  if os.path.isdir(fdatDir + dir):
-   payloadFile = fdatDir + dir + '.dat'
+ fdatDir = get_bundle_resource_path('updatershell/fdat')
+ for directory in os.listdir(fdatDir):
+  directoryPath = os.path.join(fdatDir, directory)
+  if os.path.isdir(directoryPath):
+   payloadFile = os.path.join(fdatDir, directory + '.dat')
    if os.path.isfile(payloadFile):
-    for model in os.listdir(fdatDir + dir):
-     hdrFile = fdatDir + dir + '/' + model
+    for model in os.listdir(directoryPath):
+     hdrFile = os.path.join(directoryPath, model)
      if os.path.isfile(hdrFile) and hdrFile.endswith('.hdr'):
       yield model[:-4], (hdrFile, payloadFile)
 

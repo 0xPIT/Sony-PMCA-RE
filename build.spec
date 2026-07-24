@@ -27,8 +27,21 @@ try:
  hiddenimports = collect_submodules('pmca.plugins')
 except Exception:
  hiddenimports = []
+# Frozen importers do not expose bundled subpackages to pkgutil.iter_modules.
+if 'pmca.plugins.system' not in hiddenimports:
+ hiddenimports.append('pmca.plugins.system')
 a = Analysis([input], excludes=excludes, datas=[('certs/*', 'certs')], hiddenimports=hiddenimports)
 a.datas = [d for d in a.datas if not (d[0].startswith('certifi') and not d[0].endswith('cacert.pem'))]
+if sys.platform == 'win32':
+ libusbDll = os.environ.get('PMCA_LIBUSB_DLL', os.path.abspath('libusb-1.0.dll'))
+ if not os.path.isfile(libusbDll):
+  raise RuntimeError(
+   'Windows builds require libusb-1.0.dll in the repository root or PMCA_LIBUSB_DLL.')
+ a.binaries = [
+  binary for binary in a.binaries
+  if os.path.basename(binary[0]).lower() not in ('libusb-1.0.dll', 'libusb0.dll')
+ ]
+ a.binaries += [('libusb-1.0.dll', os.path.abspath(libusbDll), 'BINARY')]
 a.datas += Tree('updatershell/fdat', 'updatershell/fdat')
 if os.path.isdir('assets'):
  a.datas += Tree('assets', 'assets')
