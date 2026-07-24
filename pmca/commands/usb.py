@@ -337,6 +337,25 @@ def getDevice(driver):
   return devices[0]
 
 
+def _waitForDevice(
+ driverName, expectedType, attempts, delay, continuation
+):
+ """Poll fresh driver contexts and consume the target inside its context."""
+ for i in range(attempts):
+  time.sleep(delay)
+  with importDriver(driverName) as driver:
+   devices = list(listDevices(driver, True))
+   if len(devices) > 1:
+    raise Exception(
+     'Multiple Sony devices found while waiting for camera mode change.'
+    )
+   if len(devices) == 1 and isinstance(devices[0], expectedType):
+    continuation(devices[0])
+    return True
+  del devices
+ return False
+
+
 def infoCommand(driverName=None):
  """Display information about the camera connected via usb"""
  with importDriver(driverName) as driver:
@@ -384,6 +403,7 @@ def infoCommand(driverName=None):
 
 def installCommand(driverName=None, apkFile=None, appPackage=None, outFile=None):
  """Install the given apk on the camera"""
+ switched = False
  with importDriver(driverName) as driver:
   device = getDevice(driver)
   if device and isinstance(device, SonyExtCmdDevice):
@@ -394,24 +414,20 @@ def installCommand(driverName=None, apkFile=None, appPackage=None, outFile=None)
     print('Error: This camera does not support apps. Please check the compatibility list.')
     return
    device = None
-
-   print('Waiting for camera to switch...')
-   for i in range(10):
-    time.sleep(.5)
-    try:
-     devices = list(listDevices(driver, True))
-     if len(devices) == 1 and isinstance(devices[0], SonyAppInstallDevice):
-      device = devices[0]
-      break
-    except:
-     pass
-   else:
-    print('Operation timed out. Please run this command again when your camera has connected.')
-
-  if device and isinstance(device, SonyAppInstallDevice):
+   switched = True
+  elif device and isinstance(device, SonyAppInstallDevice):
    installApp(device, apkFile, appPackage, outFile)
   elif device:
    print('Error: Cannot use camera in this mode. Please switch to MTP or mass storage mode.')
+
+ if switched:
+  print('Waiting for camera to switch...')
+  found = _waitForDevice(
+   driverName, SonyAppInstallDevice, 10, .5,
+   lambda device: installApp(device, apkFile, appPackage, outFile),
+  )
+  if not found:
+   print('Operation timed out. Please run this command again when your camera has connected.')
 
 
 def appSelectionCommand():
@@ -452,13 +468,24 @@ def getFdat(device):
 def firmwareUpdateCommand(file, driverName=None):
  offset, size = firmware.readDat(file)
 
+ switched = False
  with importDriver(driverName) as driver:
   device = getDevice(driver)
   if device:
-   firmwareUpdateCommandInternal(driver, device, file, offset, size)
+   switched = firmwareUpdateCommandInternal(
+    device, file, offset, size
+   )
+   device = None
+
+ if switched:
+  _waitForUpdaterDevice(
+   driverName, file, offset, size, None
+  )
 
 
 def updaterShellCommand(model=None, fdatFile=None, driverName=None, complete=None):
+ switched = False
+ update = None
  with importDriver(driverName) as driver:
   device = getDevice(driver)
   if device:
@@ -485,13 +512,38 @@ def updaterShellCommand(model=None, fdatFile=None, driverName=None, complete=Non
      print('Starting updater shell...')
      print('')
      CameraShell(UsbPlatformBackend(device)).run()
-   firmwareUpdateCommandInternal(driver, device, io.BytesIO(fdat), 0, len(fdat), complete)
+   update = io.BytesIO(fdat)
+   switched = firmwareUpdateCommandInternal(
+    device, update, 0, len(fdat), complete
+   )
+   device = None
+
+ if switched:
+  _waitForUpdaterDevice(
+   driverName, update, 0, len(fdat), complete
+  )
 
 
-def firmwareUpdateCommandInternal(driver, device, file, offset, size, complete=None):
+def _waitForUpdaterDevice(
+ driverName, file, offset, size, complete
+):
+ print('')
+ print('Waiting for camera to switch...')
+ print('Please follow the instructions on the camera screen.')
+ found = _waitForDevice(
+  driverName, SonyUpdaterDevice, 60, .5,
+  lambda device: firmwareUpdateCommandInternal(
+   device, file, offset, size, complete
+  ),
+ )
+ if not found:
+  print('Operation timed out. Please run this command again when your camera has connected.')
+
+
+def firmwareUpdateCommandInternal(device, file, offset, size, complete=None):
  if not isinstance(device, SonyUpdaterDevice) and not isinstance(device, SonyExtCmdDevice):
   print('Error: Cannot use camera in this mode. Please switch to MTP or mass storage mode.')
-  return
+  return False
 
  dev = SonyUpdaterCamera(device)
 
@@ -506,25 +558,7 @@ def firmwareUpdateCommandInternal(driver, device, file, offset, size, complete=N
  if not isinstance(device, SonyUpdaterDevice):
   print('Switching to updater mode')
   dev.switchMode()
-
-  device = None
-  print('')
-  print('Waiting for camera to switch...')
-  print('Please follow the instructions on the camera screen.')
-  for i in range(60):
-   time.sleep(.5)
-   try:
-    devices = list(listDevices(driver, True))
-    if len(devices) == 1 and isinstance(devices[0], SonyUpdaterDevice):
-     device = devices[0]
-     break
-   except:
-    pass
-  else:
-   print('Operation timed out. Please run this command again when your camera has connected.')
-
-  if device:
-   firmwareUpdateCommandInternal(None, device, file, offset, size, complete)
+  return True
 
  else:
   print('Writing firmware')
@@ -532,6 +566,7 @@ def firmwareUpdateCommandInternal(driver, device, file, offset, size, complete=N
   dev.writeFirmware(ProgressFile(file, size), size, complete)
   dev.complete()
   print('Done')
+  return False
 
 
 def guessFirmwareCommand(file, driverName=None):
@@ -767,9 +802,10 @@ def wifiCommand(write=None, file=None, multi=False, driverName=None):
 def senserShellCommand(driverName=None, complete=None):
  if driverName is None and sys.platform != 'win32':
   driverName = 'libusb'
+ switched = False
+ modelName = None
  with importDriver(driverName) as driver:
   device = getDevice(driver)
-  modelName = None
   if device and isinstance(device, SonyMscExtCmdDevice):
    if not isinstance(device.driver, GenericUsbDriver):
     print('Error: Only libusb drivers are supported for switching to service mode.')
@@ -789,43 +825,56 @@ def senserShellCommand(driverName=None, complete=None):
    dev.start()
    dev.authenticate()
 
+   dev = None
    device = None
-   print('')
-   print('Waiting for camera to switch...')
-   for i in range(10):
-    time.sleep(.5)
-    try:
-     devices = list(listDevices(driver, True))
-     if len(devices) == 1 and isinstance(devices[0], SonySenserDevice):
-      device = devices[0]
-      break
-    except:
-     pass
-   else:
-    print('Operation timed out. Please run this command again when your camera has connected.')
-
-  if device and isinstance(device, SonySenserDevice):
-   if not isinstance(device.driver, GenericUsbDriver):
-    print('Error: Only libusb drivers are supported for service mode.')
-    if sys.platform == 'win32':
-     print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device (verify '
-      'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
-      'via Device Manager afterwards.')
-    return
-
-   print('Authenticating')
-   dev = SonySenserAuthDevice(device.driver)
-   dev.start()
-   dev.authenticate()
-   try:
-    if complete:
-     complete(SonySenserCamera(device), modelName)
-    else:
-     print('Starting service shell...')
-     print('')
-     CameraShell(SenserPlatformBackend(SonySenserCamera(device))).run()
-   finally:
-    dev.stop()
-   print('Done')
+   switched = True
+  elif device and isinstance(device, SonySenserDevice):
+   _runSenserContinuation(device, modelName, complete)
   elif device:
    print('Error: Cannot use camera in this mode. Please switch to mass storage mode.')
+
+ if switched:
+  print('')
+  print('Waiting for camera to switch...')
+  found = _waitForDevice(
+   driverName, SonySenserDevice, 10, .5,
+   lambda device: _runSenserContinuation(
+    device, modelName, complete
+   ),
+  )
+  if not found:
+   print('Operation timed out. Please run this command again when your camera has connected.')
+
+
+def _runSenserContinuation(device, modelName, complete):
+ if not isinstance(device.driver, GenericUsbDriver):
+  print('Error: Only libusb drivers are supported for service mode.')
+  if sys.platform == 'win32':
+   print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device (verify '
+    'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
+    'via Device Manager afterwards.')
+  return
+
+ print('Authenticating')
+ dev = SonySenserAuthDevice(device.driver)
+ started = False
+ try:
+  dev.start()
+  started = True
+  dev.authenticate()
+  if complete:
+   complete(SonySenserCamera(device), modelName)
+  else:
+   print('Starting service shell...')
+   print('')
+   CameraShell(SenserPlatformBackend(SonySenserCamera(device))).run()
+ finally:
+  if started:
+   if sys.exc_info()[0] is None:
+    dev.stop()
+   else:
+    try:
+     dev.stop()
+    except BaseException:
+     pass
+ print('Done')
