@@ -95,10 +95,16 @@ class OutputCapture:
 class Api:
     """Python API exposed to the JavaScript frontend via pywebview."""
 
+    _TWEAK_IDLE = 'idle'
+    _TWEAK_WAITING = 'waiting'
+    _TWEAK_APPLYING = 'applying'
+    _TWEAK_CLOSING = 'closing'
+
     def __init__(self):
         self._window = None
         self._ui_lock = threading.RLock()
         self._operation_lock = threading.Lock()
+        self._tweak_lock = threading.Lock()
         self._closing = False
         self._ui_ready = False
         self._camera_operations_closed = False
@@ -106,6 +112,9 @@ class Api:
         self._apps = []
         self._tweaks_data = None
         self._tweak_interface = None
+        self._tweak_apply_event = None
+        self._tweak_state = self._TWEAK_IDLE
+        self._tweak_shutdown_requested = False
 
     def set_window(self, window):
         with self._ui_lock:
@@ -118,14 +127,19 @@ class Api:
 
     def shutdown(self):
         """Called on window close; stop touching a destroyed WebView."""
+        # These locks are acquired sequentially, never nested.
         with self._operation_lock:
             self._camera_operations_closed = True
         with self._ui_lock:
             self._closing = True
             self._ui_ready = False
             self._window = None
-        # Release a tweak session that may be blocked waiting for apply/cancel.
-        event = getattr(self, '_tweak_apply_event', None)
+        event = None
+        with self._tweak_lock:
+            self._tweak_shutdown_requested = True
+            if self._tweak_state == self._TWEAK_WAITING:
+                self._tweak_state = self._TWEAK_CLOSING
+                event = self._tweak_apply_event
         if event:
             event.set()
 
@@ -148,7 +162,9 @@ class Api:
         self._evaluate_js('window._signalError()')
 
     def _notify(self, event, data='null'):
-        self._evaluate_js('window._onEvent(%s, %s)' % (json.dumps(event), data))
+        return self._evaluate_js(
+            'window._onEvent(%s, %s)' % (json.dumps(event), data)
+        )
 
     def _start_camera_operation(self, name, target):
         """Synchronously admit at most one camera/USB operation."""
@@ -317,6 +333,8 @@ class Api:
 
     def _run_tweaks(self, backend):
         backend.start()
+        event = None
+        registered = False
         try:
             tweaks = TweakInterface(backend)
             tweak_list = list(tweaks.getTweaks())
@@ -324,45 +342,114 @@ class Api:
                 print('No tweaks available')
                 return
 
-            self._tweak_interface = tweaks
             data = [{'id': t[0], 'desc': t[1], 'enabled': bool(t[2]), 'value': t[3]} for t in tweak_list]
-            self._tweaks_data = data
 
             event = threading.Event()
-            self._tweak_apply_event = event
-            self._notify('tweaks_available', json.dumps(data))
+            with self._tweak_lock:
+                if self._tweak_state != self._TWEAK_IDLE:
+                    raise RuntimeError('A tweak session is already active')
+                self._tweak_interface = tweaks
+                self._tweaks_data = data
+                self._tweak_apply_event = event
+                self._tweak_state = self._TWEAK_WAITING
+                registered = True
+                close_now = self._tweak_shutdown_requested
+                if close_now:
+                    self._tweak_state = self._TWEAK_CLOSING
+            if close_now:
+                event.set()
+            else:
+                delivered = self._notify(
+                    'tweaks_available', json.dumps(data)
+                )
+                if not delivered:
+                    with self._tweak_lock:
+                        if (
+                            self._tweak_state == self._TWEAK_WAITING and
+                            self._tweak_apply_event is event
+                        ):
+                            self._tweak_state = self._TWEAK_CLOSING
+                            event.set()
             event.wait()
         finally:
-            backend.stop()
+            try:
+                backend.stop()
+            finally:
+                if registered:
+                    with self._tweak_lock:
+                        if self._tweak_apply_event is event:
+                            self._tweak_interface = None
+                            self._tweaks_data = None
+                            self._tweak_apply_event = None
+                            self._tweak_state = self._TWEAK_IDLE
 
     def set_tweak(self, tweak_id, enabled):
-        if self._tweak_interface:
-            self._tweak_interface.setEnabled(tweak_id, enabled)
-            tweak_list = list(self._tweak_interface.getTweaks())
+        with self._tweak_lock:
+            if self._tweak_state != self._TWEAK_WAITING:
+                return False
+            tweaks = self._tweak_interface
+            tweaks.setEnabled(tweak_id, enabled)
+            tweak_list = list(tweaks.getTweaks())
             data = [{'id': t[0], 'desc': t[1], 'enabled': bool(t[2]), 'value': t[3]} for t in tweak_list]
             self._tweaks_data = data
-            self._notify('tweaks_available', json.dumps(data))
+        self._notify('tweaks_available', json.dumps(data))
+        return True
 
     def apply_tweaks(self):
+        with self._tweak_lock:
+            if self._tweak_state != self._TWEAK_WAITING:
+                return False
+            self._tweak_state = self._TWEAK_APPLYING
+            tweaks = self._tweak_interface
+            event = self._tweak_apply_event
+        self._notify('tweaks_applying')
+
+        def close_session():
+            with self._tweak_lock:
+                if (
+                    self._tweak_state == self._TWEAK_APPLYING and
+                    self._tweak_apply_event is event
+                ):
+                    self._tweak_state = self._TWEAK_CLOSING
+                    return event
+            return None
+
         def task():
             try:
-                if self._tweak_interface:
-                    self._notify('tweaks_applying')
-                    print('Applying tweaks...')
-                    self._tweak_interface.apply()
-                    print('Tweaks applied successfully')
+                print('Applying tweaks...')
+                tweaks.apply()
+                print('Tweaks applied successfully')
             except Exception:
                 traceback.print_exc()
             finally:
+                wake = close_session()
                 self._notify('tweaks_done')
-                if hasattr(self, '_tweak_apply_event'):
-                    self._tweak_apply_event.set()
-        threading.Thread(target=task, daemon=True).start()
+                if wake:
+                    wake.set()
+
+        try:
+            worker = threading.Thread(
+                target=task, name='pmca-apply-tweaks', daemon=True
+            )
+            worker.start()
+        except BaseException:
+            wake = close_session()
+            self._notify('tweaks_done')
+            if wake:
+                wake.set()
+            raise
+        return True
 
     def cancel_tweaks(self):
+        with self._tweak_lock:
+            if self._tweak_state != self._TWEAK_WAITING:
+                return False
+            self._tweak_state = self._TWEAK_CLOSING
+            event = self._tweak_apply_event
         self._notify('tweaks_done')
-        if hasattr(self, '_tweak_apply_event'):
-            self._tweak_apply_event.set()
+        if event:
+            event.set()
+        return True
 
     def read_wifi(self, multi=False):
         def task():
