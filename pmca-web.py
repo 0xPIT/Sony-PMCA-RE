@@ -40,6 +40,67 @@ _ERROR_MARKERS = (
     'native driver not installed',
 )
 
+_WINDOWS_INSTANCE_MUTEX = r'Local\Sony-PMCA-RE-pmca-web'
+_ERROR_ALREADY_EXISTS = 183
+
+
+def _get_windows_kernel32():
+    import ctypes
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (
+        ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p,
+    )
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_bool
+    return ctypes, kernel32
+
+
+def _close_windows_handle(handle, ctypes_module=None, kernel32=None):
+    if ctypes_module is None or kernel32 is None:
+        ctypes_module, kernel32 = _get_windows_kernel32()
+    ctypes_module.set_last_error(0)
+    if not kernel32.CloseHandle(handle):
+        raise ctypes_module.WinError(ctypes_module.get_last_error())
+
+
+def _acquire_windows_single_instance(name=_WINDOWS_INSTANCE_MUTEX):
+    ctypes_module, kernel32 = _get_windows_kernel32()
+    ctypes_module.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, False, name)
+    error = ctypes_module.get_last_error()
+    if not handle:
+        raise ctypes_module.WinError(error)
+    if error == _ERROR_ALREADY_EXISTS:
+        _close_windows_handle(handle, ctypes_module, kernel32)
+        return None
+    return handle
+
+
+def _release_windows_single_instance(handle):
+    if handle is not None:
+        _close_windows_handle(handle)
+
+
+def _show_already_running_message():
+    import ctypes
+
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.MessageBoxW.argtypes = (
+        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint,
+    )
+    user32.MessageBoxW.restype = ctypes.c_int
+    ctypes.set_last_error(0)
+    if not user32.MessageBoxW(
+        None,
+        'PMCA is already running.\n'
+        'Close the existing window before starting another instance.',
+        'PMCA Camera Utility',
+        0x30,  # MB_OK | MB_ICONWARNING
+    ):
+        raise ctypes.WinError(ctypes.get_last_error())
+
 
 class StdoutCapture:
     """Captures stdout and sends to the webview window. Detects error messages."""
@@ -736,7 +797,7 @@ def get_webview_start_options():
     return {}
 
 
-def main():
+def _run_application():
     api = Api()
     capture = OutputCapture(api)
     capture.start()
@@ -754,6 +815,21 @@ def main():
     window.events.loaded += api.mark_ready
     window.events.closed += api.shutdown
     webview.start(**get_webview_start_options())
+
+
+def main():
+    if sys.platform != 'win32':
+        return _run_application()
+
+    instance_handle = _acquire_windows_single_instance()
+    if instance_handle is None:
+        _show_already_running_message()
+        return None
+
+    try:
+        return _run_application()
+    finally:
+        _release_windows_single_instance(instance_handle)
 
 
 if __name__ == '__main__':
