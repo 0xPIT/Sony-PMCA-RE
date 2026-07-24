@@ -98,8 +98,11 @@ class Api:
     def __init__(self):
         self._window = None
         self._ui_lock = threading.RLock()
+        self._operation_lock = threading.Lock()
         self._closing = False
         self._ui_ready = False
+        self._camera_operations_closed = False
+        self._active_camera_operation = None
         self._apps = []
         self._tweaks_data = None
         self._tweak_interface = None
@@ -115,6 +118,8 @@ class Api:
 
     def shutdown(self):
         """Called on window close; stop touching a destroyed WebView."""
+        with self._operation_lock:
+            self._camera_operations_closed = True
         with self._ui_lock:
             self._closing = True
             self._ui_ready = False
@@ -144,6 +149,44 @@ class Api:
 
     def _notify(self, event, data='null'):
         self._evaluate_js('window._onEvent(%s, %s)' % (json.dumps(event), data))
+
+    def _start_camera_operation(self, name, target):
+        """Synchronously admit at most one camera/USB operation."""
+        token = object()
+        with self._operation_lock:
+            if self._camera_operations_closed:
+                return False
+            if self._active_camera_operation is not None:
+                active_name = self._active_camera_operation[0]
+            else:
+                active_name = None
+                self._active_camera_operation = (name, token)
+
+        if active_name is not None:
+            print('Error: Camera operation "%s" is already running.' % active_name)
+            return False
+
+        def run():
+            try:
+                target()
+            finally:
+                self._release_camera_operation(token)
+
+        try:
+            worker = threading.Thread(
+                target=run, name='pmca-%s' % name, daemon=True
+            )
+            worker.start()
+        except BaseException:
+            self._release_camera_operation(token)
+            raise
+        return True
+
+    def _release_camera_operation(self, token):
+        with self._operation_lock:
+            active = self._active_camera_operation
+            if active is not None and active[1] is token:
+                self._active_camera_operation = None
 
     def get_config(self):
         return {
@@ -183,7 +226,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"info"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('info', task)
 
     def install_app(self, package):
         def task():
@@ -197,7 +240,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"install"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('install', task)
 
     def select_apk(self):
         file_types = ('APK Files (*.apk)', 'All Files (*.*)')
@@ -221,7 +264,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"install"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('install', task)
 
     def firmware_update(self):
         def task():
@@ -238,7 +281,7 @@ class Api:
             except Exception:
                 traceback.print_exc()
                 self._notify('task_end', '"firmware"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('firmware', task)
 
     def start_tweaks_updater(self):
         def task():
@@ -254,7 +297,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"tweaks"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('tweaks', task)
 
     def start_tweaks_service(self):
         def task():
@@ -270,7 +313,7 @@ class Api:
                 traceback.print_exc()
             finally:
                 self._notify('task_end', '"tweaks"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('tweaks', task)
 
     def _run_tweaks(self, backend):
         backend.start()
@@ -361,7 +404,7 @@ class Api:
                 self._notify('wifi_result', json.dumps({'error': 'Failed to read WiFi settings'}))
             finally:
                 self._notify('task_end', '"wifi"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('wifi', task)
 
     def write_wifi(self, networks, multi=False):
         def task():
@@ -395,7 +438,7 @@ class Api:
                 self._notify('wifi_write_result', json.dumps({'error': 'Failed to write WiFi settings'}))
             finally:
                 self._notify('task_end', '"wifi"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('wifi', task)
 
 
     def _get_camera_model_serial(self):
@@ -501,7 +544,7 @@ class Api:
                 self._notify('backup_status', json.dumps({'message': 'Backup download failed.', 'done': True}))
             finally:
                 self._notify('task_end', '"backup"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('backup', task)
 
     def restore_backup(self, mode='updater'):
         def task():
@@ -566,7 +609,7 @@ class Api:
                 self._notify('backup_status', json.dumps({'message': 'Backup restore failed.', 'done': True}))
             finally:
                 self._notify('task_end', '"backup"')
-        threading.Thread(target=task, daemon=True).start()
+        return self._start_camera_operation('backup', task)
 
 
 _REQUIRED_WEB_ASSETS = (

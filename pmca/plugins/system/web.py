@@ -1,14 +1,9 @@
 """Web GUI backend handlers for the system diagnostics plugin."""
 
 import json
-import threading
 import traceback
 
 from .diagnostics import run_all_checks
-
-
-def _run(target):
-    threading.Thread(target=target, daemon=True).start()
 
 
 def run(api):
@@ -36,4 +31,4 @@ def run(api):
             traceback.print_exc()
         finally:
             api._notify('task_end', '"system"')
-    _run(task)
+    return api._start_camera_operation('system', task)
