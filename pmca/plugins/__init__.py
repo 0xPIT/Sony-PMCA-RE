@@ -22,10 +22,12 @@ Discovery and plugin imports are lazy and failure-isolated: a broken plugin is
 reported and skipped, never taking the host application down with it.
 """
 
+import importlib
 import pkgutil
 import traceback
 
 _loaded = None
+_BUILTIN_PLUGINS = ('system',)
 
 
 def _discover():
@@ -34,12 +36,22 @@ def _discover():
     if _loaded is not None:
         return _loaded
 
-    _loaded = []
+    names = set(_BUILTIN_PLUGINS)
     for finder, name, is_pkg in pkgutil.iter_modules(__path__):
         if not is_pkg or name.startswith('_'):
             continue
+        names.add(name)
+
+    _loaded = []
+    for name in sorted(names):
+        module_name = '%s.%s' % (__name__, name)
         try:
-            module = __import__('%s.%s' % (__name__, name), fromlist=['__name__'])
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError as error:
+            if error.name == module_name:
+                continue
+            traceback.print_exc()
+            continue
         except Exception:
             traceback.print_exc()
             continue
