@@ -337,6 +337,161 @@ Sony-PMCA-RE-public/
 
 ---
 
+## CI Build: GitHub Actions Workflow
+
+Since there's no Windows dev machine available, `wdi-helper.exe` is built entirely in GitHub Actions on `windows-latest`. The libwdi project itself already does this successfully (see `libwdi/.github/workflows/vs2022.yml`).
+
+### Workflow: `.github/workflows/build-wdi-helper.yml`
+
+```yaml
+name: Build wdi-helper
+
+on:
+  push:
+    paths:
+      - 'wdi-helper/**'
+  pull_request:
+    paths:
+      - 'wdi-helper/**'
+  workflow_dispatch:
+
+env:
+  WDK_URL: https://go.microsoft.com/fwlink/p/?LinkID=253170
+  LIBUSB0_URL: https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.0/libusb-win32-bin-1.4.0.0.zip
+  LIBUSBK_URL: https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z
+  LIBWDI_REPO: https://github.com/pbatard/libwdi.git
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout libwdi
+        run: git clone --depth 1 ${{ env.LIBWDI_REPO }} libwdi-src
+
+      - name: Download driver support files
+        shell: cmd
+        run: |
+          curl -L %WDK_URL% -o wdk-redist.msi
+          curl -L %LIBUSB0_URL% -o libusb0-redist.zip
+          curl -L %LIBUSBK_URL% -o libusbk-redist.7z
+          msiexec /a wdk-redist.msi /qn TARGETDIR=%CD%\libwdi-src\wdk
+          7z x libusb0-redist.zip
+          7z x libusbk-redist.7z
+          move libusb-win32* libwdi-src\libusb0
+          move libusbK* libwdi-src\libusbk
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build libwdi static library
+        shell: cmd
+        run: |
+          cd libwdi-src
+          set BUILD_MACROS="WDK_DIR=\"../wdk/Windows Kits/8.0\";LIBUSB0_DIR=\"../libusb0\";LIBUSBK_DIR=\"../libusbk/bin\""
+          msbuild libwdi.sln /m /t:libwdi_static /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+
+      - name: Build wdi-helper.exe
+        shell: cmd
+        run: |
+          cd wdi-helper
+          cl /O2 /MT /I ..\libwdi-src\libwdi ^
+            wdi-helper.c ^
+            /link /OUT:wdi-helper.exe ^
+            ..\libwdi-src\x64\Release\libwdi_static.lib ^
+            setupapi.lib newdev.lib ntdll.lib ole32.lib ^
+            /MANIFESTUAC:"level='requireAdministrator'" ^
+            /SUBSYSTEM:CONSOLE
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wdi-helper
+          path: wdi-helper/wdi-helper.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          gh release upload ${{ github.ref_name }} wdi-helper/wdi-helper.exe
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### How It Works
+
+1. **Checks out libwdi source** — cloned fresh from pbatard/libwdi (or pinned to a tag)
+2. **Downloads embedded driver files** — the same WDK, libusb-win32, and libusbK binaries that libwdi's own CI uses. These get embedded into `libwdi_static.lib` at build time so the final exe is self-contained.
+3. **Builds `libwdi_static.lib`** via MSBuild (the same solution file libwdi's own CI uses)
+4. **Compiles `wdi-helper.c`** against the static lib with MSVC `cl.exe`, linking in the UAC manifest directly via linker flag
+5. **Uploads the artifact** — downloadable from the Actions run, and attached to GitHub Releases on tag push
+
+### Integration with Main Build
+
+The existing `build.yml` (which produces PyInstaller bundles) can be extended to download `wdi-helper.exe` from the latest artifact:
+
+```yaml
+    - name: Download wdi-helper (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/download-artifact@v4
+      with:
+        name: wdi-helper
+        path: .
+        # Or use gh CLI to grab from latest release:
+        # gh release download --pattern 'wdi-helper.exe' --dir .
+
+    - name: Build
+      run: |
+        python -OO -m PyInstaller pmca-console.spec
+```
+
+The PyInstaller spec would include `wdi-helper.exe` as additional data:
+
+```python
+# In pmca-console.spec, add to Analysis datas:
+datas=[('wdi-helper.exe', '.')]
+```
+
+### Development Workflow (Without a Windows Machine)
+
+1. Write/edit `wdi-helper/wdi-helper.c` on macOS
+2. Push to a branch — CI builds automatically
+3. Download the artifact from the Actions tab to test
+4. For testing, use a Windows VM (e.g., GitHub Codespaces with Windows, or a free-tier Azure VM) or ask a collaborator to run the exe
+
+### Alternative: MinGW Cross-Compile
+
+If you'd prefer to avoid MSVC entirely, libwdi also supports MinGW builds (see `libwdi/.github/workflows/mingw.yml`). This uses MSYS2 on the GitHub runner:
+
+```yaml
+    - name: Install MinGW
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: mingw64
+        install: mingw-w64-x86_64-toolchain base-devel autotools
+
+    - name: Build libwdi + wdi-helper
+      shell: msys2 {0}
+      run: |
+        cd libwdi-src
+        ./bootstrap.sh
+        ./configure --disable-shared --enable-static \
+          --with-wdkdir="wdk/Windows Kits/8.0" \
+          --with-libusb0="libusb0" \
+          --with-libusbk="libusbk/bin"
+        make
+        cd ../wdi-helper
+        gcc -O2 -I ../libwdi-src/libwdi wdi-helper.c \
+          -L ../libwdi-src/libwdi/.libs -lwdi \
+          -lsetupapi -lnewdev -lole32 \
+          -o wdi-helper.exe
+```
+
+The MSVC route is recommended (matches libwdi's primary build, produces smaller binaries, native UAC manifest embedding).
+
+---
+
 ## Future Enhancements
 
 1. **Swap MSC driver too**: Automate the initial `-d libusb` requirement so the full service-mode flow works without any manual driver setup at all.
