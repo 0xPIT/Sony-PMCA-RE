@@ -6,6 +6,18 @@ import sys
 
 from . import DiagResult
 
+_CREATE_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+_WMP_NETWORK_SERVICE = b'WMPNetworkSvc.exe'
+
+
+def _tasklist_contains_process(output, process_name):
+ target = process_name.lower()
+ for line in output.splitlines():
+  tokens = line.split(None, 1)
+  if tokens and tokens[0].lower() == target:
+   return True
+ return False
+
 # Concrete, community-proven recipe for binding a libusb driver on Windows.
 # Service mode ONLY — never replace the normal-mode (MTP/MSC) driver.
 ZADIG_RECIPE = (
@@ -111,9 +123,11 @@ def check_wmp_not_claiming():
  try:
   result = subprocess.run(
    ['tasklist', '/FI', 'IMAGENAME eq WMPNetworkSvc.exe'],
-   capture_output=True, text=True, timeout=5
+   capture_output=True, timeout=5,
+   creationflags=_CREATE_NO_WINDOW
   )
-  if 'WMPNetworkSvc.exe' in result.stdout:
+  result.check_returncode()
+  if _tasklist_contains_process(result.stdout, _WMP_NETWORK_SERVICE):
    return DiagResult('warn', 'WMP Network Service',
     'Windows Media Player Network Sharing Service is running.',
     'This service can interfere with MTP camera access. '
