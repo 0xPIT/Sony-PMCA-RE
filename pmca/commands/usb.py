@@ -279,8 +279,10 @@ def _recognizeDevices(candidates, quiet=False):
   if type == USB_CLASS_MSC:
    if not quiet:
     print('\nQuerying mass storage device')
-   # Get device info
-   info = MscDevice(drv).getDeviceInfo()
+   try:
+    info = MscDevice(drv).getDeviceInfo()
+   except GenericUsbException:
+    continue
 
    if isSonyMscCamera(info):
     if isSonyMscUpdaterCamera(dev):
@@ -295,7 +297,6 @@ def _recognizeDevices(candidates, quiet=False):
   elif type == USB_CLASS_PTP:
    if not quiet:
     print('\nQuerying MTP device')
-   # Get device info
    info = MtpDevice(drv).getDeviceInfo()
 
    if isSonyMtpCamera(info):
