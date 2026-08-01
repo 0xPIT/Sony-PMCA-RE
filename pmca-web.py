@@ -265,7 +265,8 @@ class Api:
                     backend = SenserPlatformBackend(dev)
                     self._run_tweaks(backend)
 
-                senserShellCommand(complete=complete)
+                # Non-interactive: auto-install Windows libusb-win32 when needed (UAC still prompts).
+                senserShellCommand(complete=complete, interactive=False)
             except Exception:
                 traceback.print_exc()
             finally:
@@ -459,7 +460,7 @@ class Api:
                         backend = SenserPlatformBackend(cam)
                         self._notify('backup_status', json.dumps({'message': 'Downloading backup data...'}))
                         backup_data[0] = backend.getBackupData()
-                    senserShellCommand(complete=complete)
+                    senserShellCommand(complete=complete, interactive=False)
 
                 if backup_data[0] is None:
                     self._notify('backup_status', json.dumps({'message': 'Failed to download backup.', 'done': True}))
@@ -554,7 +555,7 @@ class Api:
                             success[0] = True
                         else:
                             print('Warning: Backup verification mismatch')
-                    senserShellCommand(complete=complete)
+                    senserShellCommand(complete=complete, interactive=False)
 
                 if success[0]:
                     print('Backup restored and verified successfully')

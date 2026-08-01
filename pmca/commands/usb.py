@@ -189,12 +189,25 @@ class UsbDriverList(contextlib.AbstractContextManager):
    recognized = list(recognize(
     self._listCandidates(nativeDrivers, vendor)
    ))
-   if recognized:
-    yield from recognized
+   # Native Windows "driverless" detection yields UnimplementedUsbDriver —
+   # that is not usable; try libusb once a real driver is bound.
+   usable = [
+    device for device in recognized
+    if type(getattr(device, 'driver', None)).__name__ != 'UnimplementedUsbDriver'
+   ]
+   if usable:
+    yield from usable
    elif fallbackAvailable:
-    yield from recognize(
+    fallbackRecognized = list(recognize(
      self._listCandidates(self._getFallbackDrivers(classType), vendor)
-    )
+    ))
+    if fallbackRecognized:
+     yield from fallbackRecognized
+    elif recognized:
+     # Expose driverless detections so callers can auto-install a driver.
+     yield from recognized
+   elif recognized:
+    yield from recognized
 
 
 def importDriver(driverName=None):
@@ -219,7 +232,8 @@ def importDriver(driverName=None):
    except (ImportError, OSError):
     if driverName == 'native':
      raise
-   if driverName == 'native':
+   # Detect driverless service-mode devices (also when selecting drivers automatically).
+   if driverName in (None, 'native'):
     from ..usb.driver.windows.driverless import VendorSpecificContext
   elif sys.platform == 'darwin':
    from ..usb.driver.osx import isMscDriverAvailable
@@ -274,6 +288,13 @@ def importDriver(driverName=None):
  return UsbDriverList(*allDrivers)
 
 
+def _tagUsbIds(device, handle):
+ """Attach USB ids from the enumeration handle for later driver install."""
+ device.idVendor = handle.idVendor
+ device.idProduct = handle.idProduct
+ return device
+
+
 def _recognizeDevices(candidates, quiet=False):
  for dev, type, drv in candidates:
   if type == USB_CLASS_MSC:
@@ -288,11 +309,11 @@ def _recognizeDevices(candidates, quiet=False):
     if isSonyMscUpdaterCamera(dev):
      if not quiet:
       print('%s %s is a camera in updater mode' % (info.manufacturer, info.model))
-     yield SonyMscUpdaterDevice(drv)
+     yield _tagUsbIds(SonyMscUpdaterDevice(drv), dev)
     else:
      if not quiet:
       print('%s %s is a camera in mass storage mode' % (info.manufacturer, info.model))
-     yield SonyMscExtCmdDevice(drv)
+     yield _tagUsbIds(SonyMscExtCmdDevice(drv), dev)
 
   elif type == USB_CLASS_PTP:
    if not quiet:
@@ -302,16 +323,16 @@ def _recognizeDevices(candidates, quiet=False):
    if isSonyMtpCamera(info):
     if not quiet:
      print('%s %s is a camera in MTP mode' % (info.manufacturer, info.model))
-    yield SonyMtpExtCmdDevice(drv)
+    yield _tagUsbIds(SonyMtpExtCmdDevice(drv), dev)
    elif isSonyMtpAppInstallCamera(info):
     if not quiet:
      print('%s %s is a camera in app install mode' % (info.manufacturer, info.model))
-    yield SonyMtpAppInstallDevice(drv)
+    yield _tagUsbIds(SonyMtpAppInstallDevice(drv), dev)
 
   elif type == USB_CLASS_VENDOR_SPECIFIC:
    if isSonySenserCamera(dev):
     print('Found a camera in service mode')
-    yield SonySenserDevice(drv)
+    yield _tagUsbIds(SonySenserDevice(drv), dev)
 
   if not quiet:
    print('')
@@ -338,9 +359,23 @@ def getDevice(driver):
   return devices[0]
 
 
-def _promptInstallServiceDriver(pid):
- """Offer to install libusb-win32 for a service-mode PID. Returns True on success."""
- if sys.platform != 'win32':
+def _driverInstallInteractive(interactive=None):
+ """Whether to ask before installing a USB driver (False in the web GUI)."""
+ if interactive is not None:
+  return bool(interactive)
+ try:
+  return sys.stdin is not None and sys.stdin.isatty()
+ except Exception:
+  return False
+
+
+def _promptInstallServiceDriver(pid, interactive=None, purpose='service mode'):
+ """Install libusb-win32 for a Sony USB PID. Returns True on success.
+
+ In non-interactive contexts (web GUI / redirected stdin), installs without a
+ Y/n prompt after printing what will happen. UAC still requires user approval.
+ """
+ if sys.platform != 'win32' or pid is None:
   return False
  try:
   from ..usb.driver.windows.wdi import helper_available, install_libusb_driver
@@ -349,16 +384,23 @@ def _promptInstallServiceDriver(pid):
  if not helper_available():
   return False
 
- print('Service mode device detected without a usable libusb driver.')
- resp = input('Install libusb-win32 driver automatically? [Y/n] ')
- if resp.strip().lower() == 'n':
-  print('Skipped. Use Zadig to install libusb-win32 for 054C:%04X.' % pid)
-  return False
+ print('Sony USB device 054C:%04X needs a libusb-win32 driver for %s.' % (
+  pid, purpose))
+ if _driverInstallInteractive(interactive):
+  try:
+   resp = input('Install libusb-win32 driver automatically? [Y/n] ')
+  except EOFError:
+   resp = 'y'
+  if resp.strip().lower() == 'n':
+   print('Skipped. Use Zadig to install libusb-win32 for 054C:%04X.' % pid)
+   return False
+ else:
+  print('Installing libusb-win32 driver automatically (UAC prompt may appear)...')
 
- print('Installing driver (UAC prompt may appear)...')
+ print('Installing driver...')
  if install_libusb_driver(vid=SONY_ID_VENDOR, pid=pid):
   print('Driver installed successfully.')
-  time.sleep(1)
+  time.sleep(1.5)
   return True
  print('Driver installation failed. Use Zadig manually.')
  return False
@@ -371,12 +413,23 @@ def _restoreServiceDriver(pid):
   from ..usb.driver.windows.wdi import restore_original_driver
  except ImportError:
   return
- print('Restoring original USB driver...')
+ print('Restoring original USB driver for 054C:%04X...' % pid)
  if restore_original_driver(vid=SONY_ID_VENDOR, pid=pid):
   print('Driver restored.')
  else:
   print('Warning: Could not restore driver automatically. '
    'Use Device Manager to roll back if needed.')
+
+
+def _restoreInstalledDrivers(serviceDriverState):
+ if not serviceDriverState:
+  return
+ # Restore service-mode first, then any MSC filter used to enter service mode.
+ for key in ('installed_pid', 'installed_msc_pid'):
+  pid = serviceDriverState.get(key)
+  if pid is not None:
+   _restoreServiceDriver(pid)
+   serviceDriverState[key] = None
 
 
 def _listDriverlessSenserPids():
@@ -395,18 +448,19 @@ def _listDriverlessSenserPids():
 
 def _waitForDevice(
  driverName, expectedType, attempts, delay, continuation,
- autoInstallServiceDriver=False, serviceDriverState=None,
+ autoInstallServiceDriver=False, serviceDriverState=None, interactive=None,
 ):
  """Poll fresh driver contexts and consume the target inside its context.
 
  If autoInstallServiceDriver is True (Windows service-mode wait), detect a
- driverless 054C:02A9/0336 device and offer to install libusb-win32 via
- wdi-helper. When installation succeeds, serviceDriverState['installed_pid']
- is set so the caller can restore afterward.
+ driverless 054C:02A9/0336 device and install libusb-win32 via wdi-helper.
+ When installation succeeds, serviceDriverState['installed_pid'] is set so
+ the caller can restore afterward. Prefer driverName='libusb' after install.
  """
  if serviceDriverState is None:
   serviceDriverState = {}
  installOffered = False
+ pollDriverName = driverName
 
  for i in range(attempts):
   time.sleep(delay)
@@ -417,16 +471,21 @@ def _waitForDevice(
    if pids:
     installOffered = True
     pid = pids[0]
-    if _promptInstallServiceDriver(pid):
+    if _promptInstallServiceDriver(pid, interactive=interactive):
      serviceDriverState['installed_pid'] = pid
+     pollDriverName = 'libusb'
 
-  with importDriver(driverName) as driver:
+  with importDriver(pollDriverName) as driver:
    devices = list(listDevices(driver, True))
    if len(devices) > 1:
     raise Exception(
      'Multiple Sony devices found while waiting for camera mode change.'
     )
    if len(devices) == 1 and isinstance(devices[0], expectedType):
+    # Driverless native detections are not usable for the shell.
+    if (type(getattr(devices[0], 'driver', None)).__name__
+      == 'UnimplementedUsbDriver'):
+     continue
     continuation(devices[0])
     return True
   del devices
@@ -876,89 +935,165 @@ def wifiCommand(write=None, file=None, multi=False, driverName=None):
       print('%-20s%s' % (k + ': ', v))
 
 
-def senserShellCommand(driverName=None, complete=None):
+def _switchCameraToSenser(device):
+ """Send the service-mode switch over an already-open libusb MSC handle."""
+ print('Switching to service mode')
+ dev = SonySenserAuthDevice(device.driver)
+ dev.start()
+ dev.authenticate()
+
+
+def senserShellCommand(driverName=None, complete=None, interactive=None):
+ """Enter service mode and run complete()/shell.
+
+ interactive=False (used by the web GUI) auto-installs Windows libusb-win32
+ drivers without a Y/n prompt when a driverless Sony device is detected.
+ """
  if driverName is None and sys.platform != 'win32':
   driverName = 'libusb'
+ if interactive is None:
+  interactive = _driverInstallInteractive()
+
  switched = False
  modelName = None
  serviceDriverState = {}
+ needMscLibusb = False
+ needSenserLibusb = False
+ senserPid = None
+
  with importDriver(driverName) as driver:
   device = getDevice(driver)
   if device and isinstance(device, SonyMscExtCmdDevice):
    if not isinstance(device.driver, GenericUsbDriver):
-    print('Error: Only libusb drivers are supported for switching to service mode.')
-    if sys.platform == 'win32':
-     print('Use Zadig 2.8 to bind the "libusb-win32" driver to the mass storage device (verify '
-      'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
-      'via Device Manager afterwards.')
-    return
+    if sys.platform != 'win32':
+     print('Error: Only libusb drivers are supported for switching to service mode.')
+     return
+    needMscLibusb = True
+    serviceDriverState['installed_msc_pid'] = getattr(device, 'idProduct', None)
+   else:
+    try:
+     modelName = SonyExtCmdCamera(device).getCameraInfo().modelName
+    except Exception:
+     pass
+    _switchCameraToSenser(device)
+    switched = True
 
+  elif device and isinstance(device, SonySenserDevice):
+   if isinstance(device.driver, GenericUsbDriver):
+    _runSenserContinuation(
+     device, modelName, complete, serviceDriverState, interactive=interactive)
+    return
+   # Driverless / unusable native detection — install then reopen via libusb.
+   needSenserLibusb = True
+   senserPid = getattr(device, 'idProduct', None)
+  elif device:
+   print('Error: Cannot use camera in this mode. Please switch to mass storage mode.')
+   return
+  elif sys.platform == 'win32':
+   # Camera already in service mode but invisible to libusb until a driver is bound.
+   pids = _listDriverlessSenserPids()
+   if pids:
+    needSenserLibusb = True
+    senserPid = pids[0]
+
+ if needMscLibusb:
+  mscPid = serviceDriverState.get('installed_msc_pid')
+  print('Switching to service mode requires libusb on the mass-storage interface.')
+  if not mscPid or not _promptInstallServiceDriver(
+    mscPid, interactive=interactive, purpose='entering service mode'):
+   print('Use Zadig 2.8 to bind the "libusb-win32" driver to the mass storage device '
+    '(verify VID 054C/PID/interface first), then roll it back via Device Manager '
+    'afterwards.')
+   serviceDriverState['installed_msc_pid'] = None
+   return
+  print('Reopening camera with libusb...')
+  with importDriver('libusb') as driver:
+   device = getDevice(driver)
+   if (not device or not isinstance(device, SonyMscExtCmdDevice)
+     or not isinstance(device.driver, GenericUsbDriver)):
+    print('Error: Camera not accessible via libusb after driver install.')
+    _restoreInstalledDrivers(serviceDriverState)
+    return
    try:
     modelName = SonyExtCmdCamera(device).getCameraInfo().modelName
    except Exception:
     pass
-
-   print('Switching to service mode')
-   dev = SonySenserAuthDevice(device.driver)
-   dev.start()
-   dev.authenticate()
-
-   dev = None
-   device = None
+   _switchCameraToSenser(device)
    switched = True
-  elif device and isinstance(device, SonySenserDevice):
-   _runSenserContinuation(device, modelName, complete, serviceDriverState)
-  elif device:
-   print('Error: Cannot use camera in this mode. Please switch to mass storage mode.')
+
+ if needSenserLibusb:
+  if senserPid is None:
+   pids = _listDriverlessSenserPids()
+   senserPid = pids[0] if pids else 0x0336
+  print('Service mode device has no usable libusb driver yet.')
+  if not _promptInstallServiceDriver(
+    senserPid, interactive=interactive, purpose='service mode'):
+   print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device '
+    '(verify VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, '
+    'and roll it back via Device Manager afterwards.')
+   return
+  serviceDriverState['installed_pid'] = senserPid
+  print('Reopening service-mode device with libusb...')
+  _runSenserWithLibusb(modelName, complete, serviceDriverState)
+  return
 
  if switched:
   print('')
   print('Waiting for camera to switch...')
+  # After switch, prefer libusb so the newly bound service-mode device is usable.
+  waitDriver = 'libusb' if sys.platform == 'win32' else driverName
   found = _waitForDevice(
-   driverName, SonySenserDevice, 10, .5,
+   waitDriver, SonySenserDevice, 20, .5,
    lambda device: _runSenserContinuation(
-    device, modelName, complete, serviceDriverState
+    device, modelName, complete, serviceDriverState, interactive=interactive,
    ),
    autoInstallServiceDriver=True,
    serviceDriverState=serviceDriverState,
+   interactive=interactive,
   )
   if not found:
    print('Operation timed out. Please run this command again when your camera has connected.')
-   _restoreServiceDriver(serviceDriverState.get('installed_pid'))
+   _restoreInstalledDrivers(serviceDriverState)
 
 
-def _runSenserContinuation(device, modelName, complete, serviceDriverState=None):
+def _runSenserContinuation(
+ device, modelName, complete, serviceDriverState=None, interactive=None,
+):
  if serviceDriverState is None:
   serviceDriverState = {}
 
  if not isinstance(device.driver, GenericUsbDriver):
-  print('Error: Only libusb drivers are supported for service mode.')
-  if sys.platform == 'win32':
-   pid = None
-   if hasattr(device.driver, 'getId'):
-    try:
-     pid = device.driver.getId()[1]
-    except Exception:
-     pass
-   if pid is None:
-    pids = _listDriverlessSenserPids()
-    pid = pids[0] if pids else 0x0336
+  print('Service mode device has no usable libusb driver yet.')
+  if sys.platform != 'win32':
+   print('Error: Only libusb drivers are supported for service mode.')
+   return
+  pid = getattr(device, 'idProduct', None)
+  if pid is None and hasattr(device.driver, 'getId'):
    try:
-    from ..usb.driver.windows.wdi import helper_available
-    canAuto = helper_available()
-   except ImportError:
-    canAuto = False
-   if canAuto and _promptInstallServiceDriver(pid):
-    serviceDriverState['installed_pid'] = pid
-    print('Driver installed. Please run this command again.')
-   else:
-    print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device (verify '
-     'VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, and roll it back '
-     'via Device Manager afterwards.')
+    pid = device.driver.getId()[1]
+   except Exception:
+    pass
+  if pid is None:
+   pids = _listDriverlessSenserPids()
+   pid = pids[0] if pids else 0x0336
+  try:
+   from ..usb.driver.windows.wdi import helper_available
+   canAuto = helper_available()
+  except ImportError:
+   canAuto = False
+  if not (canAuto and _promptInstallServiceDriver(
+    pid, interactive=interactive, purpose='service mode')):
+   print('Use Zadig 2.8 to bind the "libusb-win32" driver to the service-mode device '
+    '(verify VID 054C/PID/interface first). Do not replace the normal MTP/MSC driver, '
+    'and roll it back via Device Manager afterwards.')
+   return
+  serviceDriverState['installed_pid'] = pid
+  print('Reopening service-mode device with libusb...')
+  # Must open a fresh libusb context; the current device handle is unusable.
+  _runSenserWithLibusb(modelName, complete, serviceDriverState)
   return
 
- # If a previous run installed the filter and asked the user to re-run,
- # pick up the pending restore PID from the helper state file.
+ # If a previous run installed the filter, pick up the pending restore PID.
  if serviceDriverState.get('installed_pid') is None and sys.platform == 'win32':
   try:
    from ..usb.driver.windows.wdi import pending_restore_pid
@@ -968,6 +1103,25 @@ def _runSenserContinuation(device, modelName, complete, serviceDriverState=None)
   except ImportError:
    pass
 
+ _runSenserSession(device, modelName, complete, serviceDriverState)
+
+
+def _runSenserWithLibusb(modelName, complete, serviceDriverState):
+ """Open the service-mode device via libusb and run the session to completion."""
+ with importDriver('libusb') as driver:
+  device = getDevice(driver)
+  if not device or not isinstance(device, SonySenserDevice):
+   print('Error: Service-mode device not found via libusb.')
+   _restoreInstalledDrivers(serviceDriverState)
+   return
+  if not isinstance(device.driver, GenericUsbDriver):
+   print('Error: Service-mode device still not accessible via libusb.')
+   _restoreInstalledDrivers(serviceDriverState)
+   return
+  _runSenserSession(device, modelName, complete, serviceDriverState)
+
+
+def _runSenserSession(device, modelName, complete, serviceDriverState):
  print('Authenticating')
  dev = SonySenserAuthDevice(device.driver)
  started = False
@@ -992,6 +1146,5 @@ def _runSenserContinuation(device, modelName, complete, serviceDriverState=None)
      except BaseException:
       pass
  finally:
-  _restoreServiceDriver(serviceDriverState.get('installed_pid'))
-  serviceDriverState['installed_pid'] = None
+  _restoreInstalledDrivers(serviceDriverState)
  print('Done')
