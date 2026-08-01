@@ -67,14 +67,14 @@ jobs:
           $cfg = $cfg -replace '#define OPT_ARM','// #define OPT_ARM'
           Set-Content msvc\config.h $cfg -NoNewline
 
+          # Drop all ProjectReferences. We prebuild embedder/installer_x64 ourselves;
+          # leaving Win32-only refs makes MSBuild probe them as Release|x64 (MSB8013).
           $proj = 'libwdi\.msvc\libwdi_static.vcxproj'
           $xml = Get-Content $proj -Raw
-          foreach ($name in @('installer_arm64','installer_x86')) {
-            $xml = [regex]::Replace(
-              $xml,
-              "\s*<ProjectReference Include=`"$name\.vcxproj`">[\s\S]*?</ProjectReference>",
-              '')
-          }
+          $xml = [regex]::Replace(
+            $xml,
+            '\s*<ItemGroup>\s*<ProjectReference[\s\S]*?</ItemGroup>',
+            '')
           Set-Content $proj $xml -NoNewline
 
       - name: Build libwdi static library (x64)
