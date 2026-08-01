@@ -3,8 +3,13 @@ on:
   push:
     tags:
       - 'v*'
+    # Temporary: allow full app builds from this feature branch (remove after merge).
+    branches:
+      - cursor/auto-driver-swap
+  workflow_dispatch:
 permissions:
   contents: write
+  actions: read
 jobs:
   wdi-helper:
     uses: ./.github/workflows/build-wdi-helper.yml
@@ -36,6 +41,15 @@ jobs:
       with:
         name: wdi-helper
         path: wdi-helper
+
+    - name: Verify wdi-helper (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        if (-not (Test-Path 'wdi-helper\wdi-helper.exe')) {
+          throw 'wdi-helper.exe missing after artifact download'
+        }
+        Get-Item 'wdi-helper\wdi-helper.exe' | Format-List Name, Length, FullName
 
     - uses: actions/setup-python@v6
       with:
@@ -103,7 +117,8 @@ jobs:
         path: release/*
 
   release:
-    if: startsWith(github.ref, 'refs/tags/')
+    # Tag pushes only — skip for manual workflow_dispatch test builds.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     steps:
