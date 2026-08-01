@@ -60,38 +60,40 @@ jobs:
         shell: pwsh
         working-directory: deps/libwdi
         run: |
-          # wdi-helper is amd64-only; skip ARM64 installers (not on windows-latest toolset)
-          (Get-Content msvc\config.h -Raw) -replace '#define OPT_ARM','// #define OPT_ARM' |
-            Set-Content msvc\config.h -NoNewline
+          # wdi-helper is amd64-only. Disable Win32/ARM embedding so we do not need
+          # installer_x86 / installer_arm64 (and their toolchains) on the runner.
+          $cfg = Get-Content msvc\config.h -Raw
+          $cfg = $cfg -replace '#define OPT_M32','// #define OPT_M32'
+          $cfg = $cfg -replace '#define OPT_ARM','// #define OPT_ARM'
+          Set-Content msvc\config.h $cfg -NoNewline
 
           $proj = 'libwdi\.msvc\libwdi_static.vcxproj'
           $xml = Get-Content $proj -Raw
-          # Drop ARM64 project reference (requires ARM cross tools + OPT_ARM)
-          $xml = [regex]::Replace(
-            $xml,
-            '\s*<ProjectReference Include="installer_arm64\.vcxproj">[\s\S]*?</ProjectReference>',
-            '')
-          # Drop x86 installer project reference: x64 builds define BUILD64 which
-          # disables OPT_M32, and a direct vcxproj build would wrongly use Platform=x64.
-          $xml = [regex]::Replace(
-            $xml,
-            '\s*<ProjectReference Include="installer_x86\.vcxproj">[\s\S]*?</ProjectReference>',
-            '')
+          foreach ($name in @('installer_arm64','installer_x86')) {
+            $xml = [regex]::Replace(
+              $xml,
+              "\s*<ProjectReference Include=`"$name\.vcxproj`">[\s\S]*?</ProjectReference>",
+              '')
+          }
           Set-Content $proj $xml -NoNewline
 
       - name: Build libwdi static library (x64)
         shell: cmd
         working-directory: deps/libwdi
         # Build only the pieces needed for an amd64 libwdi.lib:
-        #   detect_64build + embedder (Win32 helper) → installer_x64 → libwdi_static
+        #   embedder (Win32 helper exe) → installer_x64 → libwdi_static
+        # Note: embedder's ProjectReference rebuilds detect_64build as Win32 and
+        # writes NO_BUILD64; that is fine once OPT_M32 is disabled in config.h.
         run: |
           set SOLUTIONDIR=%CD%\
-          msbuild libwdi\.msvc\detect_64build.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
-          if errorlevel 1 exit /b 1
           msbuild libwdi\.msvc\embedder.vcxproj /m /p:Configuration=Release,Platform=Win32,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
           if errorlevel 1 exit /b 1
           msbuild libwdi\.msvc\installer_x64.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
           if errorlevel 1 exit /b 1
+          if not exist x64\Release\helper\installer_x64.exe (
+            echo installer_x64.exe missing
+            exit /b 1
+          )
           msbuild libwdi\.msvc\libwdi_static.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }},BuildProjectReferences=false
           if errorlevel 1 exit /b 1
           if not exist x64\Release\lib\libwdi.lib (
