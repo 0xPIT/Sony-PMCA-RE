@@ -62,10 +62,11 @@ jobs:
       - name: Build libwdi static library
         shell: cmd
         working-directory: deps/libwdi
-        # Parentheses in the solution project name "libwdi (static)" are invalid for /t:,
-        # so build the vcxproj directly and set SolutionDir for OutDir paths.
+        # Build via the .sln (same as upstream libwdi CI). Direct vcxproj builds pass
+        # Platform=x64 to Win32-only deps (embedder, installer_x86) and fail MSB8013.
+        # Solution mappings remap those projects to Release|Win32 under Platform=x64.
         run: |
-          msbuild libwdi\.msvc\libwdi_static.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%CD%\,BuildMacros=${{ env.BUILD_MACROS }}
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=${{ env.BUILD_MACROS }}
 
       - name: Build wdi-helper.exe
         shell: cmd
