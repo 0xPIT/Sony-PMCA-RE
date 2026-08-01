@@ -32,7 +32,7 @@ jobs:
 
     - name: Download wdi-helper (Windows)
       if: runner.os == 'Windows'
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         name: wdi-helper
         path: wdi-helper
@@ -97,7 +97,7 @@ jobs:
         cp dist/pmca-web* release/
 
     - name: Upload
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       with:
         name: ${{ matrix.artifact }}
         path: release/*
@@ -110,7 +110,7 @@ jobs:
     - uses: actions/checkout@v5
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v5
+      uses: actions/download-artifact@v8
       with:
         path: artifacts
 

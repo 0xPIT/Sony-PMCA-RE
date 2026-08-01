@@ -52,12 +52,9 @@ jobs:
           move libusbK* libusbk
 
       - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Set up MSVC developer command prompt
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: microsoft/setup-msbuild@v3
         with:
-          arch: x64
+          msbuild-architecture: x64
 
       - name: Build libwdi static library
         shell: cmd
@@ -70,7 +67,11 @@ jobs:
 
       - name: Build wdi-helper.exe
         shell: cmd
+        # Prefer vswhere + vcvarsall over ilammy/msvc-dev-cmd (still targets Node 20).
         run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+            call "%%i\VC\Auxiliary\Build\vcvarsall.bat" x64
+          )
           if not exist deps\libwdi\x64\Release\lib\libwdi.lib (
             echo libwdi.lib not found at expected path
             dir /s /b deps\libwdi\*.lib
@@ -90,7 +91,7 @@ jobs:
           wdi-helper\wdi-helper.exe --help
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wdi-helper
           path: wdi-helper/wdi-helper.exe
