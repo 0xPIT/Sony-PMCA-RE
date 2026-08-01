@@ -62,8 +62,10 @@ jobs:
       - name: Build libwdi static library
         shell: cmd
         working-directory: deps/libwdi
+        # Parentheses in the solution project name "libwdi (static)" are invalid for /t:,
+        # so build the vcxproj directly and set SolutionDir for OutDir paths.
         run: |
-          msbuild libwdi.sln /m /t:"libwdi (static)" /p:Configuration=Release,Platform=x64,BuildMacros=${{ env.BUILD_MACROS }}
+          msbuild libwdi\.msvc\libwdi_static.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%CD%\,BuildMacros=${{ env.BUILD_MACROS }}
 
       - name: Build wdi-helper.exe
         shell: cmd
