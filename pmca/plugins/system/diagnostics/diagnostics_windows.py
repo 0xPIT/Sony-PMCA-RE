@@ -21,11 +21,27 @@ def _tasklist_contains_process(output, process_name):
 # Concrete, community-proven recipe for binding a libusb driver on Windows.
 # Service mode ONLY — never replace the normal-mode (MTP/MSC) driver.
 ZADIG_RECIPE = (
- 'Service mode only: with the device in service mode, use Zadig 2.8 (zadig.akeo.ie) to '
- 'install the "libusb-win32" (1.2.7.3) driver for that specific service-mode device. '
+ 'Service mode only: release builds can install libusb-win32 automatically when you '
+ 'run serviceshell (prompt + UAC). Otherwise use Zadig 2.8 (zadig.akeo.ie) to install '
+ 'the "libusb-win32" (1.2.7.3) driver for that specific service-mode device. '
  'Verify the VID (054C), PID and interface before replacing, do NOT replace the '
  'normal-mode (MTP/Mass Storage) driver, and roll the driver back via Device Manager '
  'when you are done.')
+
+
+def check_wdi_helper():
+ """Check whether the automated driver helper is available."""
+ try:
+  from pmca.usb.driver.windows.wdi import helper_available
+  if helper_available():
+   return DiagResult('pass', 'wdi-helper',
+    'Automatic service-mode driver install helper is available.', None)
+  return DiagResult('warn', 'wdi-helper',
+   'wdi-helper.exe not found; automatic driver install unavailable.',
+   'Use a Windows release build, or download the wdi-helper Actions artifact '
+   'and place it at wdi-helper/wdi-helper.exe (or set PMCA_WDI_HELPER).')
+ except Exception as e:
+  return DiagResult('warn', 'wdi-helper', 'Could not check: %s' % str(e), None)
 
 
 def check_service_mode_libusb_binding():
@@ -154,6 +170,7 @@ def run_windows_checks():
  return [
   check_windows_version(),
   check_libusb_dll(),
+  check_wdi_helper(),
   check_service_mode_libusb_binding(),
   check_service_mode_driver(),
   check_wmp_not_claiming(),

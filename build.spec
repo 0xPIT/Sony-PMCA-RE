@@ -42,6 +42,11 @@ if sys.platform == 'win32':
   if os.path.basename(binary[0]).lower() not in ('libusb-1.0.dll', 'libusb0.dll')
  ]
  a.binaries += [('libusb-1.0.dll', os.path.abspath(libusbDll), 'BINARY')]
+ wdiHelper = os.environ.get('PMCA_WDI_HELPER', os.path.abspath(os.path.join('wdi-helper', 'wdi-helper.exe')))
+ if os.path.isfile(wdiHelper):
+  a.datas += [('wdi-helper.exe', os.path.abspath(wdiHelper), 'DATA')]
+ else:
+  print('WARNING: wdi-helper.exe not found; service-mode auto driver install will be unavailable.')
 a.datas += Tree('updatershell/fdat', 'updatershell/fdat')
 if os.path.isdir('assets'):
  a.datas += Tree('assets', 'assets')

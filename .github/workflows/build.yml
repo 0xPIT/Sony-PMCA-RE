@@ -6,7 +6,11 @@ on:
 permissions:
   contents: write
 jobs:
+  wdi-helper:
+    uses: ./.github/workflows/build-wdi-helper.yml
+
   build:
+    needs: wdi-helper
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -25,6 +29,13 @@ jobs:
     - uses: actions/checkout@v5
       with:
         fetch-depth: 0
+
+    - name: Download wdi-helper (Windows)
+      if: runner.os == 'Windows'
+      uses: actions/download-artifact@v5
+      with:
+        name: wdi-helper
+        path: wdi-helper
 
     - uses: actions/setup-python@v6
       with:

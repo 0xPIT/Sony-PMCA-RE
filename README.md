@@ -53,7 +53,13 @@ system's built-in MTP and mass storage USB drivers. No extra drivers are require
 get camera info, apply tweaks, back up/restore, or install apps.
 
 **Service mode (advanced):** the camera's service-mode USB device is not handled by a
-Windows driver, so it must be bound to a libusb driver first:
+Windows driver, so it must be bound to libusb-win32 first.
+
+Release builds of `pmca-console` can install that driver automatically when the
+service-mode device appears (you will be prompted, then Windows UAC). The driver is
+restored when the service shell exits. See [docs/Idea.AutoDriverSwap.md](docs/Idea.AutoDriverSwap.md).
+
+Manual fallback (Zadig):
 
 1. Start the operation so the camera enters service mode and the new USB device appears.
 2. Open [Zadig 2.8](https://zadig.akeo.ie), find that **service-mode** device (Sony
@@ -139,15 +145,14 @@ It is currently only supported in the command line application:
 
 #### Windows Drivers
 
-To use service mode on Windows, custom drivers have to be installed using [Zadig](http://zadig.akeo.ie/):
+Entering service mode still requires a libusb handle on the mass-storage interface
+(use `-d libusb` or bind libusb-win32 with [Zadig](http://zadig.akeo.ie/) for that
+device, then roll it back afterward).
 
-- Make sure the camera is connected in mass storage mode.
-- In Zadig, check *Options -> List All Devices*, select the camera, select *libusb-win32* and click *Replace Driver*.
-- Run `pmca-console serviceshell` to make the camera switch modes.
-- Once the camera has switched, repeat the above step to install a driver for service mode.
-- You should now be able to use `pmca-console serviceshell`.
-
-To be able to use the camera normally again, the libusb drivers have to be uninstalled in device manager.
+Once the camera re-enumerates in service mode, release builds can install libusb-win32
+automatically (prompt + UAC) and restore it when the shell exits. If automatic install
+is unavailable, use Zadig on the service-mode device (`054C:0336` or `054C:02A9`) only
+— do not replace the normal MTP/Mass Storage driver.
 
 ## Is it safe?
 

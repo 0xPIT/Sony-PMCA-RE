@@ -2,3 +2,8 @@
 /dist
 *.pyc
 .DS_Store
+/wdi-helper/wdi-helper.exe
+/wdi-helper/*.obj
+/wdi-helper/*.exp
+/wdi-helper/*.lib
+/deps/
