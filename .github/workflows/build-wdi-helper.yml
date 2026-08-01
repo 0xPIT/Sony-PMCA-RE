@@ -56,26 +56,55 @@ jobs:
         with:
           msbuild-architecture: x64
 
-      - name: Build libwdi static library
+      - name: Prepare libwdi for x64-only host build
+        shell: pwsh
+        working-directory: deps/libwdi
+        run: |
+          # wdi-helper is amd64-only; skip ARM64 installers (not on windows-latest toolset)
+          (Get-Content msvc\config.h -Raw) -replace '#define OPT_ARM','// #define OPT_ARM' |
+            Set-Content msvc\config.h -NoNewline
+
+          $proj = 'libwdi\.msvc\libwdi_static.vcxproj'
+          $xml = Get-Content $proj -Raw
+          # Drop ARM64 project reference (requires ARM cross tools + OPT_ARM)
+          $xml = [regex]::Replace(
+            $xml,
+            '\s*<ProjectReference Include="installer_arm64\.vcxproj">[\s\S]*?</ProjectReference>',
+            '')
+          # Drop x86 installer project reference: x64 builds define BUILD64 which
+          # disables OPT_M32, and a direct vcxproj build would wrongly use Platform=x64.
+          $xml = [regex]::Replace(
+            $xml,
+            '\s*<ProjectReference Include="installer_x86\.vcxproj">[\s\S]*?</ProjectReference>',
+            '')
+          Set-Content $proj $xml -NoNewline
+
+      - name: Build libwdi static library (x64)
         shell: cmd
         working-directory: deps/libwdi
-        # Build via the .sln (same as upstream libwdi CI). Direct vcxproj builds pass
-        # Platform=x64 to Win32-only deps (embedder, installer_x86) and fail MSB8013.
-        # Solution mappings remap those projects to Release|Win32 under Platform=x64.
+        # Build only the pieces needed for an amd64 libwdi.lib:
+        #   detect_64build + embedder (Win32 helper) → installer_x64 → libwdi_static
         run: |
-          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=${{ env.BUILD_MACROS }}
+          set SOLUTIONDIR=%CD%\
+          msbuild libwdi\.msvc\detect_64build.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
+          if errorlevel 1 exit /b 1
+          msbuild libwdi\.msvc\embedder.vcxproj /m /p:Configuration=Release,Platform=Win32,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
+          if errorlevel 1 exit /b 1
+          msbuild libwdi\.msvc\installer_x64.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }}
+          if errorlevel 1 exit /b 1
+          msbuild libwdi\.msvc\libwdi_static.vcxproj /m /p:Configuration=Release,Platform=x64,SolutionDir=%SOLUTIONDIR%,BuildMacros=${{ env.BUILD_MACROS }},BuildProjectReferences=false
+          if errorlevel 1 exit /b 1
+          if not exist x64\Release\lib\libwdi.lib (
+            echo libwdi.lib not found at x64\Release\lib\libwdi.lib
+            dir /s /b *.lib
+            exit /b 1
+          )
 
       - name: Build wdi-helper.exe
         shell: cmd
-        # Prefer vswhere + vcvarsall over ilammy/msvc-dev-cmd (still targets Node 20).
         run: |
           for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
             call "%%i\VC\Auxiliary\Build\vcvarsall.bat" x64
-          )
-          if not exist deps\libwdi\x64\Release\lib\libwdi.lib (
-            echo libwdi.lib not found at expected path
-            dir /s /b deps\libwdi\*.lib
-            exit /b 1
           )
           cl /nologo /O2 /MT /W3 /I deps\libwdi\libwdi ^
             wdi-helper\wdi-helper.c ^
