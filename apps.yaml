@@ -1,0 +1,129 @@
+---
+package: com.github.ma1co.pmcademo.app
+name: PMCADemo
+author: ma1co
+desc: A demo app
+homepage: https://github.com/ma1co/PMCADemo
+release:
+  type: github
+  user: ma1co
+  repo: PMCADemo
+
+---
+package: com.github.ma1co.openmemories.tweak
+name: "OpenMemories: Tweak"
+author: ma1co
+desc: Unlock your camera's settings
+homepage: https://github.com/ma1co/OpenMemories-Tweak
+release:
+  type: github
+  user: ma1co
+  repo: OpenMemories-Tweak
+
+---
+package: com.github.ma1co.openmemories.appstore
+name: "OpenMemories: AppStore"
+author: ma1co
+desc: Install new apps directly on your camera
+homepage: https://github.com/ma1co/OpenMemories-AppStore
+release:
+  type: github
+  user: ma1co
+  repo: OpenMemories-AppStore
+
+---
+package: org.bostwickenator.dofmath
+name: dof-math
+author: Bostwickenator
+desc: Calculate the front, back, and hyperfocal distances
+homepage: https://github.com/Bostwickenator/dof-math
+release:
+  type: github
+  user: Bostwickenator
+  repo: dof-math
+
+---
+package: org.bostwickenator.googlephotos
+name: STG Uploader
+author: Bostwickenator
+desc: Upload photos directly into Google Photos
+homepage: https://www.stg-uploader.xyz/
+release:
+  type: yaml
+  url: https://www.stg-uploader.xyz/releases/releases.yaml
+
+---
+package: org.bostwickenator.ftpuploader
+name: FTP Uploader
+author: Bostwickenator
+desc: Upload photos to your FTP server
+homepage: https://www.stg-uploader.xyz/
+release:
+  type: yaml
+  url: https://www.stg-uploader.xyz/ftp-releases/releases.yaml
+
+---
+package: com.obsidium.focusbracket
+name: FocusBracket
+author: obs1dium
+desc: Proof-of-concept app for focus bracketing
+homepage: https://github.com/obs1dium/FocusBracket
+release:
+  type: github
+  user: obs1dium
+  repo: FocusBracket
+
+---
+package: com.obsidium.bettermanual
+name: BetterManual
+author: obs1dium
+desc: An app for improved manual shooting with the Alpha 5100
+homepage: https://github.com/obs1dium/BetterManual
+release:
+  type: github
+  user: obs1dium
+  repo: BetterManual
+
+---
+package: com.jonasjuffinger.timelapse
+name: TimeLapse
+author: jonasjuffinger
+desc: A simple app to take pictures with a given interval
+homepage: https://github.com/jonasjuffinger/TimeLapse
+release:
+  type: github
+  user: jonasjuffinger
+  repo: TimeLapse
+
+---
+package: com.github.LubikR.synologyuploader
+name: SynologyUploader
+author: LubikR
+desc: Upload photos to Synology NAS
+homepage: https://github.com/LubikR/SynologyUploader
+release:
+  type: github
+  user: LubikR
+  repo: SynologyUploader
+  
+---
+package: info.schnatterer.pmcaFilesystemServer
+name: pmcaFilesystemServer
+author: schnatterer
+desc: Provides the File System of the camera via HTTP
+homepage: https://github.com/schnatterer/pmcaFilesystemServer
+release:
+  type: github
+  user: schnatterer
+  repo: pmcaFilesystemServer
+
+---
+package: com.voxivoid.recipelab
+name: RecipeLab
+author: André Domingues (voxivoid)
+desc: Film simulations and camera looks
+homepage: https://github.com/voxivoid/recipe-lab-sony-pmca/
+release:
+  type: github
+  user: voxivoid
+  repo: recipe-lab-sony-pmca
